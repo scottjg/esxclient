@@ -12,6 +12,8 @@
 		412F66DE1CB6F6E100CA6395 /* MainMenu.xib in Resources */ = {isa = PBXBuildFile; fileRef = 412F66DC1CB6F6E100CA6395 /* MainMenu.xib */; };
 		412F66E91CB6F6E100CA6395 /* esxclientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 412F66E81CB6F6E100CA6395 /* esxclientTests.swift */; };
 		412F66F41CB6F6E100CA6395 /* esxclientUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 412F66F31CB6F6E100CA6395 /* esxclientUITests.swift */; };
+		412F67021CB70A4B00CA6395 /* NSURLSessionDelegator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 412F67011CB70A4B00CA6395 /* NSURLSessionDelegator.swift */; };
+		412F67041CB72BA500CA6395 /* StringExtensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 412F67031CB72BA500CA6395 /* StringExtensions.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -43,6 +45,8 @@
 		412F66EF1CB6F6E100CA6395 /* esxclientUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = esxclientUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		412F66F31CB6F6E100CA6395 /* esxclientUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = esxclientUITests.swift; sourceTree = "<group>"; };
 		412F66F51CB6F6E100CA6395 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		412F67011CB70A4B00CA6395 /* NSURLSessionDelegator.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = NSURLSessionDelegator.swift; sourceTree = "<group>"; };
+		412F67031CB72BA500CA6395 /* StringExtensions.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StringExtensions.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -97,6 +101,8 @@
 				412F66DA1CB6F6E100CA6395 /* Assets.xcassets */,
 				412F66DC1CB6F6E100CA6395 /* MainMenu.xib */,
 				412F66DF1CB6F6E100CA6395 /* Info.plist */,
+				412F67011CB70A4B00CA6395 /* NSURLSessionDelegator.swift */,
+				412F67031CB72BA500CA6395 /* StringExtensions.swift */,
 			);
 			path = esxclient;
 			sourceTree = "<group>";
@@ -249,7 +255,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				412F67041CB72BA500CA6395 /* StringExtensions.swift in Sources */,
 				412F66D91CB6F6E100CA6395 /* AppDelegate.swift in Sources */,
+				412F67021CB70A4B00CA6395 /* NSURLSessionDelegator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
