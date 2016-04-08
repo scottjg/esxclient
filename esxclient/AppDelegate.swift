@@ -126,27 +126,139 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         inputStream?.open()
         outputStream?.open()
+        var sockets = (inputStream, outputStream)
         
         var readBuffer = [UInt8](count: 8192, repeatedValue: 0)
+
+        /*
+         < 220 VMware Authentication Daemon Version 1.10: SSL Required, ServerDaemonProtocol:SOAP, MKSDisplayProtocol:VNC , VMXARGS supported, NFCSSL supported
+         */
         let size = inputStream?.read(&readBuffer, maxLength: readBuffer.count)
 
         let str = String(data: NSData(bytes: readBuffer, length: size!), encoding: NSUTF8StringEncoding)!
         print(str)
-/*
- < 220 VMware Authentication Daemon Version 1.10: SSL Required, ServerDaemonProtocol:SOAP, MKSDisplayProtocol:VNC , VMXARGS supported, NFCSSL supported
-*/
-        let ctx = SSLCreateContext(kCFAllocatorDefault, SSLProtocolSide.ClientSide, SSLConnectionType.StreamType)
-        //XXX do ssl stuff`
+        var ctx = SSLCreateContext(kCFAllocatorDefault, SSLProtocolSide.ClientSide, SSLConnectionType.StreamType)
         
-        
+        SSLSetSessionOption(ctx!, SSLSessionOption.BreakOnServerAuth, true)
+        SSLSetIOFuncs(ctx!, sslReadCallback, sslWriteCallback)
+        SSLSetConnection(ctx!, &sockets)
+        let r1 = SSLHandshake(ctx!)
+        if r1 != -9841 { //errSSLServerAuthCompleted {
+            fatalError("weird server error \(r1)")
+        }
+        let r2 = SSLHandshake(ctx!)
+
+        /*
+         > USER 52cf8c64-9343-7cb7-d151-1bfc481bb7d5
+         */
+
+        var written : Int = 0
+        let loginMessage = "USER \(ticket)\r\n".dataUsingEncoding(NSUTF8StringEncoding)
+        let r3 = SSLWrite(ctx!, loginMessage!.bytes, loginMessage!.length, &written)
+
 /*
- > USER 52cf8c64-9343-7cb7-d151-1bfc481bb7d5
- < 331 Password required for 52cf8c64-9343-7cb7-d151-1bfc481bb7d5.
- < 230 User 52cf8c64-9343-7cb7-d151-1bfc481bb7d5 logged in.
- < 200 C5:50:62:9F:97:1D:AF:96:91:0B:2D:0E:2A:CA:2E:52:FB:60:87:73
- < 200 Connect /vmfs/volumes/56d5c29a-ac1ca31f-fd75-089e01d8b64c/scottjg-enterprise2-test/scottjg-enterprise2-test.vmx
+        < 331 Password required for 52cf8c64-9343-7cb7-d151-1bfc481bb7d5.
  */
 
+        let r4 = SSLRead(ctx!, &readBuffer, 8192, &written)
+        let str1 = String(data: NSData(bytes: readBuffer, length: written), encoding: NSUTF8StringEncoding)!
+        print(str1)
+
+        /*
+         > PASS 52cf8c64-9343-7cb7-d151-1bfc481bb7d5
+         */
         
+        let passMessage = "PASS \(ticket)\r\n".dataUsingEncoding(NSUTF8StringEncoding)
+        let r5 = SSLWrite(ctx!, passMessage!.bytes, passMessage!.length, &written)
+
+        /*
+         < 230 User 52cf8c64-9343-7cb7-d151-1bfc481bb7d5 logged in.
+         */
+
+        let r6 = SSLRead(ctx!, &readBuffer, 8192, &written)
+        let str2 = String(data: NSData(bytes: readBuffer, length: written), encoding: NSUTF8StringEncoding)!
+        print(str2)
+        
+        /*
+         > THUMBPRINT <b64 encode 12 random bytes>
+        */
+        
+        let thumbprintMessage = "THUMBPRINT eJBwxqmgapMm7Nom\r\n".dataUsingEncoding(NSUTF8StringEncoding)
+        let r7 = SSLWrite(ctx!, thumbprintMessage!.bytes, thumbprintMessage!.length, &written)
+        
+        /*
+         < 200 C5:50:62:9F:97:1D:AF:96:91:0B:2D:0E:2A:CA:2E:52:FB:60:87:73
+        */
+
+        let r8 = SSLRead(ctx!, &readBuffer, 8192, &written)
+        let str3 = String(data: NSData(bytes: readBuffer, length: written), encoding: NSUTF8StringEncoding)!
+        print(str3)
+
+        /*
+         > CONNECT <vmfs path> mks\r\n
+        */
+
+        let connectMessage = "CONNECT \(cfgFile) mks\r\n".dataUsingEncoding(NSUTF8StringEncoding)
+        let r9 = SSLWrite(ctx!, connectMessage!.bytes, connectMessage!.length, &written)
+        
+        /*
+         < Connect /vmfs/volumes/56d5c29a-ac1ca31f-fd75-089e01d8b64c/scottjg-enterprise2-test/scottjg-enterprise2-test.vmx
+         */
+        
+        let r10 = SSLRead(ctx!, &readBuffer, 8192, &written)
+        let str4 = String(data: NSData(bytes: readBuffer, length: written), encoding: NSUTF8StringEncoding)!
+        print(str4)
+
+        let ctx2 = SSLCreateContext(kCFAllocatorDefault, SSLProtocolSide.ClientSide, SSLConnectionType.StreamType)
+        
+        SSLSetSessionOption(ctx2!, SSLSessionOption.BreakOnServerAuth, true)
+        SSLSetIOFuncs(ctx2!, sslReadCallback, sslWriteCallback)
+        SSLSetConnection(ctx2!, &sockets)
+        let r11 = SSLHandshake(ctx2!)
+        if r11 != -9841 { //errSSLServerAuthCompleted {
+            fatalError("weird server error \(r11)")
+        }
+        let r12 = SSLHandshake(ctx2!)
+        let r13 = SSLRead(ctx2!, &readBuffer, 8192, &written)
+        let str5 = String(data: NSData(bytes: readBuffer, length: written), encoding: NSUTF8StringEncoding)!
+        print(str5)
+
     }
 }
+
+func sslReadCallback(connection: SSLConnectionRef,
+                     data: UnsafeMutablePointer<Void>,
+                     dataLength: UnsafeMutablePointer<Int>) -> OSStatus {
+    let sockets = UnsafeMutablePointer<(NSInputStream?, NSOutputStream?)>(connection).memory
+    let inputStream = sockets.0!
+    let size = inputStream.read(UnsafeMutablePointer<UInt8>(data), maxLength: dataLength.memory)
+    dataLength.memory = size
+    return 0
+}
+
+func sslWriteCallback(connection: SSLConnectionRef,
+                      data: UnsafePointer<Void>,
+                      dataLength: UnsafeMutablePointer<Int>) -> OSStatus {
+    let sockets = UnsafeMutablePointer<(NSInputStream?, NSOutputStream?)>(connection).memory
+    let outputStream = sockets.1!
+    
+    outputStream.write(UnsafePointer<UInt8>(data), maxLength: dataLength.memory)
+    return 0
+}
+
+func sslReadCallback2(connection: SSLConnectionRef,
+                     data: UnsafeMutablePointer<Void>,
+                     dataLength: UnsafeMutablePointer<Int>) -> OSStatus {
+    let ctx = UnsafeMutablePointer<SSLContext?>(connection).memory!
+    let r = SSLRead(ctx, data, dataLength.memory, dataLength)
+    return r
+}
+
+func sslWriteCallback2(connection: SSLConnectionRef,
+                      data: UnsafePointer<Void>,
+                      dataLength: UnsafeMutablePointer<Int>) -> OSStatus {
+    let ctx = UnsafeMutablePointer<SSLContext?>(connection).memory!
+    let r = SSLWrite(ctx, data, dataLength.memory, dataLength)
+    return r
+}
+
