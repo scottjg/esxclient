@@ -9,9 +9,17 @@
 import Cocoa
 
 @NSApplicationMain
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate {
 
     @IBOutlet weak var window: NSWindow!
+    var vmwInputStream: NSInputStream?
+    var vmwOutputStream: NSOutputStream?
+    var clientInputStream: NSInputStream?
+    var clientOutputStream: NSOutputStream?
+    
+    var sslCtx: SSLContext?
+    var sslSocketPair: (NSInputStream?, NSOutputStream?)
+    
     var server: String
     var serverURL: NSURL
     var username: String
@@ -25,7 +33,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var apiVersion : String
     
     var sessionManagerName : String
-    
     var sessionKey : String
     
     override init() {
@@ -34,6 +41,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         vmId = "114"
         server = "172.16.21.33"
         serverURL = NSURL(string: "https://\(server)/sdk")!
+
         httpSession = NSURLSession(configuration: NSURLSession.sharedSession().configuration, delegate: NSURLSessionDelegator(), delegateQueue: NSURLSession.sharedSession().delegateQueue)
         serverType = ServerType.Unknown
         apiVersion = ""
@@ -119,29 +127,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     func connectConsole(ticket: String, cfgFile: String, port: Int, sslThumbprint: String) {
-        var inputStream: NSInputStream?
-        var outputStream: NSOutputStream?
-
-        NSStream.getStreamsToHostWithName(server, port: port, inputStream: &inputStream, outputStream: &outputStream)
+        NSStream.getStreamsToHostWithName(server, port: port, inputStream: &self.vmwInputStream, outputStream: &self.vmwOutputStream)
         
-        inputStream?.open()
-        outputStream?.open()
-        var sockets = (inputStream, outputStream)
+        self.vmwInputStream?.open()
+        self.vmwOutputStream?.open()
+        self.sslSocketPair = (self.vmwInputStream, self.vmwOutputStream)
         
         var readBuffer = [UInt8](count: 8192, repeatedValue: 0)
 
         /*
          < 220 VMware Authentication Daemon Version 1.10: SSL Required, ServerDaemonProtocol:SOAP, MKSDisplayProtocol:VNC , VMXARGS supported, NFCSSL supported
          */
-        let size = inputStream?.read(&readBuffer, maxLength: readBuffer.count)
+        let size = self.vmwInputStream?.read(&readBuffer, maxLength: readBuffer.count)
 
         let str = String(data: NSData(bytes: readBuffer, length: size!), encoding: NSUTF8StringEncoding)!
         print(str)
-        var ctx = SSLCreateContext(kCFAllocatorDefault, SSLProtocolSide.ClientSide, SSLConnectionType.StreamType)
+        let ctx = SSLCreateContext(kCFAllocatorDefault, SSLProtocolSide.ClientSide, SSLConnectionType.StreamType)
         
         SSLSetSessionOption(ctx!, SSLSessionOption.BreakOnServerAuth, true)
         SSLSetIOFuncs(ctx!, sslReadCallback, sslWriteCallback)
-        SSLSetConnection(ctx!, &sockets)
+        SSLSetConnection(ctx!, &self.sslSocketPair)
         let r1 = SSLHandshake(ctx!)
         if r1 != -9841 { //errSSLServerAuthCompleted {
             fatalError("weird server error \(r1)")
@@ -209,56 +214,191 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let str4 = String(data: NSData(bytes: readBuffer, length: written), encoding: NSUTF8StringEncoding)!
         print(str4)
 
-        let ctx2 = SSLCreateContext(kCFAllocatorDefault, SSLProtocolSide.ClientSide, SSLConnectionType.StreamType)
+        self.sslCtx = SSLCreateContext(kCFAllocatorDefault, SSLProtocolSide.ClientSide, SSLConnectionType.StreamType)
         
-        SSLSetSessionOption(ctx2!, SSLSessionOption.BreakOnServerAuth, true)
-        SSLSetIOFuncs(ctx2!, sslReadCallback, sslWriteCallback)
-        SSLSetConnection(ctx2!, &sockets)
-        let r11 = SSLHandshake(ctx2!)
+        SSLSetSessionOption(self.sslCtx!, SSLSessionOption.BreakOnServerAuth, true)
+        SSLSetIOFuncs(self.sslCtx!, sslReadCallback, sslWriteCallback)
+        SSLSetConnection(self.sslCtx!, &self.sslSocketPair)
+        let r11 = SSLHandshake(self.sslCtx!)
         if r11 != -9841 { //errSSLServerAuthCompleted {
             fatalError("weird server error \(r11)")
         }
-        let r12 = SSLHandshake(ctx2!)
-        let r13 = SSLRead(ctx2!, &readBuffer, 8192, &written)
-        let str5 = String(data: NSData(bytes: readBuffer, length: written), encoding: NSUTF8StringEncoding)!
-        print(str5)
+        let r12 = SSLHandshake(self.sslCtx!)
+        let randomMessage = "eJBwxqmgapMm7Nom".dataUsingEncoding(NSUTF8StringEncoding)
 
+        
+        self.vmwInputStream?.delegate = self
+        self.vmwInputStream?.scheduleInRunLoop(.mainRunLoop(), forMode: NSDefaultRunLoopMode)
+
+        let r13 = SSLWrite(self.sslCtx!, randomMessage!.bytes, randomMessage!.length, &written)
+
+        startVncProxyServer()
     }
+    
+    func startVncProxyServer() {
+        var socketContext = CFSocketContext(version: 0, info: nil, retain: nil, release: nil, copyDescription: nil)
+        let socket = CFSocketCreate(kCFAllocatorDefault, PF_INET, SOCK_STREAM, IPPROTO_TCP, CFSocketCallBackType.AcceptCallBack.rawValue, acceptVncClientConnection, &socketContext)
+
+        let fd = CFSocketGetNative(socket)
+        var reuse = true
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(sizeof(Int32)))
+
+        var addr = sockaddr_in(sin_len: 0, sin_family: 0, sin_port: 0, sin_addr: in_addr(s_addr: 0), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
+        addr.sin_len = UInt8(sizeofValue(addr))
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_addr.s_addr = UInt32(0x7F000001).bigEndian
+        addr.sin_port = UInt16(12345).bigEndian
+        
+        let ptr = withUnsafeMutablePointer(&addr){UnsafeMutablePointer<UInt8>($0)}
+        let data = CFDataCreate(nil, ptr, sizeof(sockaddr_in))
+        let r = CFSocketSetAddress(socket, data)
+
+
+        let eventSource = CFSocketCreateRunLoopSource(
+            kCFAllocatorDefault,
+            socket,
+            0);
+        
+        CFRunLoopAddSource(
+            CFRunLoopGetMain(),
+            eventSource,
+            kCFRunLoopDefaultMode);
+
+        print("waiting for incoming connection...")
+        NSWorkspace.sharedWorkspace().openURL(NSURL(string: "vnc://abc:123@localhost:12345")!)
+    }
+    
+    func handleVncProxyClient(inputStream : NSInputStream, outputStream : NSOutputStream) {
+        let msg = [UInt8]("RFB 003.008\n".utf8)
+        let r1 = outputStream.write(msg, maxLength: msg.count)
+        
+
+        var buffer = [UInt8](count: 8192, repeatedValue: 0)
+        let size = inputStream.read(&buffer, maxLength: buffer.count)
+        print(NSString(bytes: buffer, length: size, encoding: NSUTF8StringEncoding)!)
+
+        buffer[0] = 0x00
+        buffer[1] = 0x00
+        buffer[2] = 0x00
+        buffer[3] = 0x01
+        let r2 = outputStream.write(buffer, maxLength: 4)
+
+        let r3 = outputStream.write(buffer, maxLength: 16)
+
+
+        let size1 = inputStream.read(&buffer, maxLength: buffer.count)
+        if (size1 == 0) {
+            inputStream.close()
+            outputStream.close()
+            print("disconnected")
+            return
+        }
+        print("(client auth) got \(size1) bytes")
+
+        //SecurityResult
+        buffer[0] = 0x00
+        buffer[1] = 0x00
+        buffer[2] = 0x00
+        buffer[3] = 0x00
+        let r4 = outputStream.write(buffer, maxLength: 4)
+
+        let size3 = inputStream.read(&buffer, maxLength: 4)
+        print("(client init) got \(size3) bytes")
+        
+        // ok now we have to proxy the actual vnc stuff from esx
+        print("client is ready for video, proxying..")
+        self.clientOutputStream = outputStream
+        self.clientInputStream = inputStream
+
+        self.clientInputStream?.delegate = self
+        self.clientInputStream?.scheduleInRunLoop(.mainRunLoop(), forMode: NSDefaultRunLoopMode)
+        self.stream(self.vmwInputStream!, handleEvent: NSStreamEvent.HasBytesAvailable)
+    }
+    
+    func stream(aStream: NSStream, handleEvent eventCode: NSStreamEvent) {
+        if aStream.isEqual(self.vmwInputStream) {
+            //print("vmwinputstream event!")
+            if self.clientOutputStream == nil {
+                print("not ready!")
+                return
+            }
+            while self.vmwInputStream!.hasBytesAvailable {
+                var buffer = [UInt8](count: 8192, repeatedValue: 0)
+                var readSize : Int = 0
+                let r = SSLRead(self.sslCtx!, &buffer, buffer.count, &readSize)
+                if r == errSSLWouldBlock {
+                    continue
+                }
+                assert(readSize > 0)
+                let written = self.clientOutputStream?.write(buffer, maxLength: readSize)
+                assert(written == readSize)
+            }
+        } else if aStream.isEqual(self.clientInputStream) {
+            //print("clientinputstream event!")
+            while self.clientInputStream!.hasBytesAvailable {
+                var buffer = [UInt8](count: 8192, repeatedValue: 0)
+                let readSize = self.clientInputStream?.read(&buffer, maxLength: buffer.count)
+                assert(readSize > 0)
+                var written : Int = 0
+                SSLWrite(self.sslCtx!, buffer, readSize!, &written)
+                assert(written == readSize!)
+            }
+        } else {
+            print("unknown stream event!")
+        }
+    }
+}
+
+func acceptVncClientConnection(s: CFSocket!, callbackType: CFSocketCallBackType, address: CFData!, data: UnsafePointer<Void>, info: UnsafeMutablePointer<Void>) {
+    let appDelegate = NSApplication.sharedApplication().delegate as! AppDelegate
+
+    let sockAddr = UnsafePointer<sockaddr_in>(CFDataGetBytePtr(address))
+    let ipAddress = inet_ntoa(sockAddr.memory.sin_addr)
+    let addrData = NSData(bytes: ipAddress, length: Int(INET_ADDRSTRLEN))
+    let ipAddressStr = NSString(data: addrData, encoding: NSUTF8StringEncoding)!
+    print("Received a connection from \(ipAddressStr)")
+
+    let clientSocketHandle = UnsafePointer<CFSocketNativeHandle>(data).memory
+    
+    var readStream : Unmanaged<CFReadStream>?
+    var writeStream : Unmanaged<CFWriteStream>?
+    CFStreamCreatePairWithSocket(kCFAllocatorDefault, clientSocketHandle, &readStream, &writeStream)
+    
+    let inputStream : NSInputStream = readStream!.takeRetainedValue()
+    let outputStream : NSOutputStream = writeStream!.takeRetainedValue()
+    
+    inputStream.open()
+    outputStream.open()
+    
+    appDelegate.handleVncProxyClient(inputStream, outputStream: outputStream)
 }
 
 func sslReadCallback(connection: SSLConnectionRef,
                      data: UnsafeMutablePointer<Void>,
                      dataLength: UnsafeMutablePointer<Int>) -> OSStatus {
-    let sockets = UnsafeMutablePointer<(NSInputStream?, NSOutputStream?)>(connection).memory
-    let inputStream = sockets.0!
-    let size = inputStream.read(UnsafeMutablePointer<UInt8>(data), maxLength: dataLength.memory)
+    //let sockets = UnsafeMutablePointer<(NSInputStream?, NSOutputStream?)>(connection).memory
+    //let inputStream = sockets.0!
+    let appDelegate = NSApplication.sharedApplication().delegate as! AppDelegate
+    let inputStream = appDelegate.vmwInputStream!
+    let expectedReadSize = dataLength.memory
+    let size = inputStream.read(UnsafeMutablePointer<UInt8>(data), maxLength: expectedReadSize)
     dataLength.memory = size
+    if (size < expectedReadSize) {
+        //print("would have blocked. read \(size) of \(expectedReadSize)")
+        return Int32(errSSLWouldBlock)
+    }
+
     return 0
 }
 
 func sslWriteCallback(connection: SSLConnectionRef,
                       data: UnsafePointer<Void>,
                       dataLength: UnsafeMutablePointer<Int>) -> OSStatus {
-    let sockets = UnsafeMutablePointer<(NSInputStream?, NSOutputStream?)>(connection).memory
-    let outputStream = sockets.1!
-    
+    //let sockets = UnsafeMutablePointer<(NSInputStream?, NSOutputStream?)>(connection).memory
+    //let outputStream = sockets.1!
+    let appDelegate = NSApplication.sharedApplication().delegate as! AppDelegate
+    let outputStream = appDelegate.vmwOutputStream!
+
     outputStream.write(UnsafePointer<UInt8>(data), maxLength: dataLength.memory)
     return 0
 }
-
-func sslReadCallback2(connection: SSLConnectionRef,
-                     data: UnsafeMutablePointer<Void>,
-                     dataLength: UnsafeMutablePointer<Int>) -> OSStatus {
-    let ctx = UnsafeMutablePointer<SSLContext?>(connection).memory!
-    let r = SSLRead(ctx, data, dataLength.memory, dataLength)
-    return r
-}
-
-func sslWriteCallback2(connection: SSLConnectionRef,
-                      data: UnsafePointer<Void>,
-                      dataLength: UnsafeMutablePointer<Int>) -> OSStatus {
-    let ctx = UnsafeMutablePointer<SSLContext?>(connection).memory!
-    let r = SSLWrite(ctx, data, dataLength.memory, dataLength)
-    return r
-}
-
