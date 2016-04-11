@@ -14,6 +14,8 @@
 		412F66F41CB6F6E100CA6395 /* esxclientUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 412F66F31CB6F6E100CA6395 /* esxclientUITests.swift */; };
 		412F67021CB70A4B00CA6395 /* NSURLSessionDelegator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 412F67011CB70A4B00CA6395 /* NSURLSessionDelegator.swift */; };
 		412F67041CB72BA500CA6395 /* StringExtensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 412F67031CB72BA500CA6395 /* StringExtensions.swift */; };
+		416423861CBA1261000B7D27 /* VMwareApiClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 416423851CBA1261000B7D27 /* VMwareApiClient.swift */; };
+		416423881CBA29A0000B7D27 /* VMwareMksVncProxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 416423871CBA29A0000B7D27 /* VMwareMksVncProxy.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -47,6 +49,8 @@
 		412F66F51CB6F6E100CA6395 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		412F67011CB70A4B00CA6395 /* NSURLSessionDelegator.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = NSURLSessionDelegator.swift; sourceTree = "<group>"; };
 		412F67031CB72BA500CA6395 /* StringExtensions.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StringExtensions.swift; sourceTree = "<group>"; };
+		416423851CBA1261000B7D27 /* VMwareApiClient.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = VMwareApiClient.swift; sourceTree = "<group>"; };
+		416423871CBA29A0000B7D27 /* VMwareMksVncProxy.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = VMwareMksVncProxy.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -103,6 +107,8 @@
 				412F66DF1CB6F6E100CA6395 /* Info.plist */,
 				412F67011CB70A4B00CA6395 /* NSURLSessionDelegator.swift */,
 				412F67031CB72BA500CA6395 /* StringExtensions.swift */,
+				416423851CBA1261000B7D27 /* VMwareApiClient.swift */,
+				416423871CBA29A0000B7D27 /* VMwareMksVncProxy.swift */,
 			);
 			path = esxclient;
 			sourceTree = "<group>";
@@ -258,6 +264,8 @@
 				412F67041CB72BA500CA6395 /* StringExtensions.swift in Sources */,
 				412F66D91CB6F6E100CA6395 /* AppDelegate.swift in Sources */,
 				412F67021CB70A4B00CA6395 /* NSURLSessionDelegator.swift in Sources */,
+				416423881CBA29A0000B7D27 /* VMwareMksVncProxy.swift in Sources */,
+				416423861CBA1261000B7D27 /* VMwareApiClient.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -479,6 +487,7 @@
 				412F66FA1CB6F6E100CA6395 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
 		};
 		412F66FB1CB6F6E100CA6395 /* Build configuration list for PBXNativeTarget "esxclientTests" */ = {
 			isa = XCConfigurationList;
@@ -487,6 +496,7 @@
 				412F66FD1CB6F6E100CA6395 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
 		};
 		412F66FE1CB6F6E100CA6395 /* Build configuration list for PBXNativeTarget "esxclientUITests" */ = {
 			isa = XCConfigurationList;
@@ -495,6 +505,7 @@
 				412F67001CB6F6E100CA6395 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
 	};
