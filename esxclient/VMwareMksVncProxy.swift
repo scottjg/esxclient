@@ -22,6 +22,7 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
     var sslCtx: SSLContext?
     
     var vncServerSocket : CFSocket?
+    var vncClientSocketFd: CFSocketNativeHandle = -1
 
     var selfPtr: UnsafeMutablePointer<VMwareMksVncProxy> = nil
     
@@ -316,10 +317,15 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
         self.vmwOutputStream!.close()
         self.clientInputStream!.close()
         self.clientOutputStream!.close()
-
+/*
         if self.vncServerSocket != nil {
             CFSocketInvalidate(self.vncServerSocket)
             self.vncServerSocket = nil
+        }
+*/
+        if self.vncClientSocketFd > 0 {
+            close(self.vncClientSocketFd)
+            self.vncClientSocketFd = -1
         }
     }
 }
@@ -338,6 +344,7 @@ func acceptVncClientConnection(s: CFSocket!, callbackType: CFSocketCallBackType,
     var readStream : Unmanaged<CFReadStream>?
     var writeStream : Unmanaged<CFWriteStream>?
     CFStreamCreatePairWithSocket(kCFAllocatorDefault, clientSocketHandle, &readStream, &writeStream)
+    delegate.vncClientSocketFd = clientSocketHandle
     
     let inputStream : NSInputStream = readStream!.takeRetainedValue()
     let outputStream : NSOutputStream = writeStream!.takeRetainedValue()
@@ -356,7 +363,9 @@ func sslReadCallback(connection: SSLConnectionRef,
     let expectedReadSize = dataLength.memory
     let size = inputStream.read(UnsafeMutablePointer<UInt8>(data), maxLength: expectedReadSize)
     dataLength.memory = size
-    if (size < expectedReadSize) {
+    if (size == 0) {
+        return Int32(errSSLClosedGraceful)
+    } else if (size < expectedReadSize) {
         //print("would have blocked. read \(size) of \(expectedReadSize)")
         return Int32(errSSLWouldBlock)
     }

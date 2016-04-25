@@ -10,6 +10,6 @@ import Foundation
 
 extension String {
     func htmlEncode() -> String {
-        return self.stringByAddingPercentEncodingWithAllowedCharacters(.URLHostAllowedCharacterSet())!
+        return self.stringByReplacingOccurrencesOfString("<", withString: "&lt;").stringByReplacingOccurrencesOfString(">", withString: "&gt;").stringByReplacingOccurrencesOfString("&", withString: "&amp;")
     }
 }
