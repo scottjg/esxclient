@@ -19,6 +19,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
     @IBOutlet weak var viewConsoleButton: NSButton!
     @IBOutlet weak var powerOnButton: NSButton!
     @IBOutlet weak var powerOffButton: NSButton!
+    @IBOutlet weak var progressCircle: NSProgressIndicator!
     var vmwareApi : VMwareApiClient?
     var vmwareMksVncProxy: VMwareMksVncProxy?
     var n = 0
@@ -85,17 +86,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
             let vm = vmList[row - 1]
             let id = vm["id"]
             if id != nil {
-                vmwareApi?.powerOnVM(id!) { (status) -> Void in
-                    self.vmwareApi?.getVMs() { (virtualMachines) -> Void in
-                        for vm in virtualMachines {
-                            print(vm)
-                        }
-                        dispatch_async(dispatch_get_main_queue()) {
-                            self.vmList = virtualMachines
-                            let i = self.sidebarList.selectedRow
-                            self.sidebarList.reloadData()
-                            self.sidebarList.selectRowIndexes(NSIndexSet(index: i), byExtendingSelection: false)
-                            self.sidebarAction(self)
+                self.progressCircle?.doubleValue = 1.0
+                self.progressCircle.hidden = false
+                vmwareApi?.powerOnVM(id!) { (progress, status) -> Void in
+                    print(progress)
+                    dispatch_async(dispatch_get_main_queue()) {
+                        self.progressCircle?.doubleValue = Double(progress > 0 ? progress : 1)
+                        self.progressCircle.hidden = (progress == 100)
+                    }
+                    
+                    if (status != "running") {
+                        self.vmwareApi?.getVMs() { (virtualMachines) -> Void in
+                            for vm in virtualMachines {
+                                print(vm)
+                            }
+                            dispatch_async(dispatch_get_main_queue()) {
+                                self.vmList = virtualMachines
+                                let i = self.sidebarList.selectedRow
+                                self.sidebarList.reloadData()
+                                self.sidebarList.selectRowIndexes(NSIndexSet(index: i), byExtendingSelection: false)
+                                self.sidebarAction(self)
+                            }
                         }
                     }
                 }
@@ -109,17 +120,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
             let vm = vmList[row - 1]
             let id = vm["id"]
             if id != nil {
-                vmwareApi?.powerOffVM(id!) { (status) -> Void in
-                    self.vmwareApi?.getVMs() { (virtualMachines) -> Void in
-                        for vm in virtualMachines {
-                            print(vm)
-                        }
-                        dispatch_async(dispatch_get_main_queue()) {
-                            self.vmList = virtualMachines
-                            let i = self.sidebarList.selectedRow
-                            self.sidebarList.reloadData()
-                            self.sidebarList.selectRowIndexes(NSIndexSet(index: i), byExtendingSelection: false)
-                            self.sidebarAction(self)
+                self.progressCircle?.doubleValue = 1.0
+                self.progressCircle.hidden = false
+                vmwareApi?.powerOffVM(id!) { (progress, status) -> Void in
+                    print(progress)
+                    dispatch_async(dispatch_get_main_queue()) {
+                        self.progressCircle?.doubleValue = Double(progress > 0 ? progress : 1)
+                        self.progressCircle.hidden = (progress == 100)
+                    }
+                    
+                    if (status != "running") {
+                        self.vmwareApi?.getVMs() { (virtualMachines) -> Void in
+                            for vm in virtualMachines {
+                                print(vm)
+                            }
+                            dispatch_async(dispatch_get_main_queue()) {
+                                self.vmList = virtualMachines
+                                let i = self.sidebarList.selectedRow
+                                self.sidebarList.reloadData()
+                                self.sidebarList.selectRowIndexes(NSIndexSet(index: i), byExtendingSelection: false)
+                                self.sidebarAction(self)
+                            }
                         }
                     }
                 }
@@ -209,13 +230,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
     }
 
     func applicationDidFinishLaunching(aNotification: NSNotification) {
-        //let host = "172.16.21.33"
-        //let username = "root"
-        //let password = "passworD1"
-
-        let host = "10.0.1.26"
+        let host = "172.16.21.33"
         let username = "root"
-        let password = "hello123"
+        let password = "passworD1"
+
+        //let host = "10.0.1.26"
+        //let username = "root"
+        //let password = "hello123"
         
         //let host = "10.0.1.29"
         //let username = "VSPHERE.LOCAL\\scottjg"

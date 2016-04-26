@@ -12,4 +12,8 @@ extension String {
     func htmlEncode() -> String {
         return self.stringByReplacingOccurrencesOfString("<", withString: "&lt;").stringByReplacingOccurrencesOfString(">", withString: "&gt;").stringByReplacingOccurrencesOfString("&", withString: "&amp;")
     }
+    
+    func urlEncode() -> String {
+        return self.stringByAddingPercentEncodingWithAllowedCharacters(.URLQueryAllowedCharacterSet())!
+    }
 }
