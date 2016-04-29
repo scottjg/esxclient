@@ -24,7 +24,12 @@ class VMwareApiClient {
     var sessionKey : String = ""
     var rootFolderName : String = ""
     var propertyCollectorName : String = ""
+    var lastUpdateVersion = ""
 
+    var vmList = [String: [String: String]]()
+    var vmUpdateCallback : ((virtualMachines: [String: [String: String]]) -> Void)? = nil
+
+    
     init(username: String, password: String, host: String) {
         self.username = username
         self.password = password
@@ -56,6 +61,7 @@ class VMwareApiClient {
         
         httpSession.dataTaskWithRequest(urlRequest) { (data, response, error) -> Void in
             let xml = try! NSXMLDocument(data: data!, options: 0)
+            
             let apiVersionNode = try! xml.nodesForXPath("//*[name()='apiVersion']")
             let apiVersion = apiVersionNode[0].stringValue!
             
@@ -145,21 +151,45 @@ class VMwareApiClient {
         urlRequest.HTTPBody = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><env:Envelope xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:env=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><env:Body><CreateFilter xmlns=\"urn:internalvim25\"><_this type=\"PropertyCollector\">\(self.propertyCollectorName)</_this><spec xsi:type=\"PropertyFilterSpec\"><propSet xsi:type=\"PropertySpec\"><type>Task</type><all>0</all><pathSet>info.progress</pathSet><pathSet>info.state</pathSet><pathSet>info.entityName</pathSet><pathSet>info.error</pathSet><pathSet>info.name</pathSet></propSet><objectSet xsi:type=\"ObjectSpec\"><obj type=\"Task\">\(taskId.htmlEncode())</obj></objectSet></spec><partialUpdates>0</partialUpdates></CreateFilter></env:Body></env:Envelope>".dataUsingEncoding(NSUTF8StringEncoding)
         httpSession.dataTaskWithRequest(urlRequest) { (data, response, error) -> Void in
             //let xml = try! NSXMLDocument(data: data!, options: 0)
-            self.pollTask() { (progress, status) -> Void in
-                callback(progress: progress, status: status)
-            }
+            //self.pollTask() { (progress, status) -> Void in
+            //    callback(progress: progress, status: status)
+            //}
         }.resume()
         
     }
     
-    func pollTask(callback: (progress: Int, status: String) -> Void) {
+    func pollForUpdates(callback: (progress: Int, status: String) -> Void) {
         let urlRequest = NSMutableURLRequest(URL: self.serverURL!)
         urlRequest.HTTPMethod = "POST"
         urlRequest.addValue("VMware VI Client/4.0.0", forHTTPHeaderField: "User-Agent")
         urlRequest.addValue("urn:internalvim25/\(self.apiVersion)", forHTTPHeaderField: "SOAPAction")
-        urlRequest.HTTPBody = "<env:Envelope xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:env=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><env:Body><WaitForUpdates xmlns=\"urn:internalvim25\"><_this type=\"PropertyCollector\">\(self.propertyCollectorName)</_this><version></version></WaitForUpdates></env:Body></env:Envelope>".dataUsingEncoding(NSUTF8StringEncoding)
+        urlRequest.HTTPBody = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><env:Envelope xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:env=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><env:Body><WaitForUpdates xmlns=\"urn:internalvim25\"><_this type=\"PropertyCollector\">\(self.propertyCollectorName)</_this><version>\(self.lastUpdateVersion.htmlEncode())</version></WaitForUpdates></env:Body></env:Envelope>".dataUsingEncoding(NSUTF8StringEncoding)
         self.httpSession.dataTaskWithRequest(urlRequest) { (data, response, error) -> Void in
+            if error != nil && error!.code == -1001 { //time out
+                self.pollForUpdates(callback)
+                return
+            }
             let xml = try! NSXMLDocument(data: data!, options: 0)
+            let ns = NSXMLElement.namespaceWithName("vim", stringValue: "urn:internalvim25")
+            xml.rootElement()!.addNamespace(ns as! NSXMLNode)
+            print(xml)
+
+            let versionNode = try! xml.nodesForXPath("/soapenv:Envelope/soapenv:Body/vim:WaitForUpdatesResponse/vim:returnval/vim:version")
+            self.lastUpdateVersion = versionNode[0].stringValue!
+
+            let filterSets = try! xml.nodesForXPath("/soapenv:Envelope/soapenv:Body/vim:WaitForUpdatesResponse/vim:returnval/vim:filterSet")
+            for filterSet in filterSets {
+                let filterNode = try! filterSet.nodesForXPath("vim:filter")
+                let propertyFilterId = filterNode[0].stringValue!
+
+                let vmSet = try! filterSet.nodesForXPath("vim:objectSet[vim:obj/@type = \"VirtualMachine\"]")
+                if vmSet.count > 0 {
+                    self.updateVirtualMachines(vmSet)
+                    self.vmUpdateCallback!(virtualMachines: self.vmList)
+                }
+            }
+/*
+            
             let changesetNodes = try! xml.nodesForXPath("//*[name()='changeSet']")
             var progress = 0
             var state = ""
@@ -177,12 +207,9 @@ class VMwareApiClient {
                 }
             }
 
-            if (state == "running") {
-                self.pollTask() { (progress, status) -> Void in
-                    callback(progress: progress, status: status)
-                }
-            }
             callback(progress: progress, status: state)
+*/*/
+            self.pollForUpdates(callback)
         }.resume()
     }
 
@@ -212,13 +239,42 @@ class VMwareApiClient {
         
         
         httpSession.dataTaskWithRequest(urlRequest) { (data, response, error) -> Void in
-            print(response)
-            callback(imageData: data!)
+            //print(response)
+            if let imageData = data {
+                callback(imageData: imageData)
+            }
         }.resume()
     }
 
 
-    func getVMs(callback: (virtualMachines: [[String: String]]) -> Void) {
+    func updateVirtualMachines(objSets: [NSXMLNode]) -> Void {
+        for objSet in objSets {
+            let objNode = try! objSet.nodesForXPath("vim:obj")
+            let vmId = objNode[0].stringValue!
+            
+            let changeSets = try! objSet.nodesForXPath("vim:changeSet")
+            for changeSet in changeSets {
+                let nameNode = try! changeSet.nodesForXPath("vim:name")
+                let name = nameNode[0].stringValue!
+
+                let valNode = try! changeSet.nodesForXPath("vim:val")
+                let val = valNode.count == 0 ? "" : valNode[0].stringValue!
+                
+                if self.vmList[vmId] == nil {
+                    self.vmList[vmId] = [String: String]()
+                    self.vmList[vmId]!["id"] = vmId
+                }
+                
+                self.vmList[vmId]![name] = val
+            }
+
+        }
+        print(self.vmList)
+    }
+    
+    func getVMs(callback: (virtualMachines: [String: [String: String]]) -> Void) {
+        self.vmUpdateCallback = callback
+        
         let urlRequest = NSMutableURLRequest(URL: self.serverURL!)
         urlRequest.HTTPMethod = "POST"
         urlRequest.addValue("urn:internalvim25/\(self.apiVersion)", forHTTPHeaderField: "SOAPAction")
@@ -240,16 +296,14 @@ class VMwareApiClient {
                 
                 var xmlResponse = "<env:Envelope xmlns:env=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">" +
                         "<env:Body>" +
-                            "<RetrieveProperties xmlns=\"urn:internalvim25\">" +
+                            "<CreateFilter xmlns=\"urn:internalvim25\">" +
                                 "<_this type=\"PropertyCollector\">\(self.propertyCollectorName)</_this>" +
-                                "<specSet xsi:type=\"PropertyFilterSpec\">" +
+                                "<spec xsi:type=\"PropertyFilterSpec\">" +
                                     "<propSet xsi:type=\"PropertySpec\">" +
                                         "<type>VirtualMachine</type>" +
                                         "<pathSet>name</pathSet>" +
                                         "<pathSet>runtime.powerState</pathSet>" +
-                                        "<pathSet>runtime.connectionState</pathSet>" +
-                                        "<pathSet>name</pathSet>" +
-                                        "<pathSet>overallStatus</pathSet>" +
+                                        "<pathSet>guest.ipAddress</pathSet>" +
                                     "</propSet>"
 
                 let vmNodes = try! xml.nodesForXPath("//*[name()='val']/*[name()='ManagedObjectReference']")
@@ -261,18 +315,21 @@ class VMwareApiClient {
                 }
 
                 xmlResponse = xmlResponse +
-                                "</specSet>" +
-                            "</RetrieveProperties>" +
+                                "</spec>" +
+                                "<partialUpdates>0</partialUpdates>" +
+                            "</CreateFilter>" +
                         "</env:Body>" +
                     "</env:Envelope>"
-                
+                //print(xmlResponse)
                 let urlRequest = NSMutableURLRequest(URL: self.serverURL!)
                 urlRequest.HTTPMethod = "POST"
                 urlRequest.addValue("urn:internalvim25/\(self.apiVersion)", forHTTPHeaderField: "SOAPAction")
                 urlRequest.HTTPBody = xmlResponse.dataUsingEncoding(NSUTF8StringEncoding)
                 self.httpSession.dataTaskWithRequest(urlRequest) { (data, response, error) -> Void in
+                    /*
                     var virtualMachines = [[String: String]]()
                     let xml = try! NSXMLDocument(data: data!, options: 0)
+                    print(xml)
                     let returnValNodes = try! xml.nodesForXPath("//*[name()='returnval']")
                     for returnValNode in returnValNodes {
                         var virtualMachine = [String: String]()
@@ -293,7 +350,7 @@ class VMwareApiClient {
                         }
                         virtualMachines.append(virtualMachine)
                     }
-                    callback(virtualMachines: virtualMachines)
+                    callback(virtualMachines: virtualMachines) */ */
                 }.resume()
             }.resume()
         }.resume()
