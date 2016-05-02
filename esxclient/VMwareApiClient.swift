@@ -29,6 +29,11 @@ class VMwareApiClient {
     var vmList = [String: [String: String]]()
     var vmUpdateCallback : ((virtualMachines: [String: [String: String]]) -> Void)? = nil
 
+    enum VMError : Int {
+        case InvalidLoginFault = -1
+        case ResponseParseError = -2
+        case UnknownError = -3
+    }
     
     init(username: String, password: String, host: String) {
         self.username = username
@@ -39,136 +44,183 @@ class VMwareApiClient {
         httpSession = NSURLSession(configuration: NSURLSession.sharedSession().configuration, delegate: NSURLSessionDelegator(), delegateQueue: NSURLSession.sharedSession().delegateQueue)
     }
     
-    func login(callback: () -> Void) {
+    func login(callback: (error: NSError?) -> Void) {
         if self.sessionManagerName == "" {
-            self.getServiceContentMsg() {
-                self.loginMsg() {
-                    callback()
+            self.getServiceContentMsg() { (error: NSError?) -> Void in
+                if error != nil {
+                    callback(error: error)
+                    return
+                }
+
+                self.loginMsg() { (error: NSError?) -> Void in
+                    callback(error: error)
                 }
             }
         } else {
-            self.loginMsg() {
-                callback()
+            self.loginMsg() { (error: NSError?) -> Void in
+                callback(error: error)
             }
         }
     }
 
-    func getServiceContentMsg(callback: () -> Void) {
-        let urlRequest = NSMutableURLRequest(URL: self.serverURL!)
-        urlRequest.HTTPMethod = "POST"
-        urlRequest.addValue("VMware VI Client/4.0.0", forHTTPHeaderField: "User-Agent")
-        urlRequest.HTTPBody = "<env:Envelope xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:env=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><env:Body><RetrieveServiceContent xmlns=\"urn:internalvim25\"><_this type=\"ServiceInstance\">ServiceInstance</_this></RetrieveServiceContent></env:Body></env:Envelope>".dataUsingEncoding(NSUTF8StringEncoding)
-        
-        httpSession.dataTaskWithRequest(urlRequest) { (data, response, error) -> Void in
-            let xml = try! NSXMLDocument(data: data!, options: 0)
+    func getServiceContentMsg(callback: (error: NSError?) -> Void) {
+        self.doRequest("<RetrieveServiceContent xmlns=\"urn:internalvim25\"><_this type=\"ServiceInstance\">ServiceInstance</_this></RetrieveServiceContent>") { (data, response, error) -> Void in
+            if error != nil {
+                callback(error: error)
+                return
+            }
+
+            let results : [String]
+            do {
+                results = try self.processXML(data, getFields: [
+                    "vim:RetrieveServiceContentResponse/vim:returnval/vim:about/vim:apiVersion",
+                    "vim:RetrieveServiceContentResponse/vim:returnval/vim:about/vim:apiType",
+                    "vim:RetrieveServiceContentResponse/vim:returnval/vim:rootFolder",
+                    "vim:RetrieveServiceContentResponse/vim:returnval/vim:propertyCollector",
+                    "vim:RetrieveServiceContentResponse/vim:returnval/vim:sessionManager"
+                    ])
+            } catch let err as NSError {
+                callback(error: err)
+                return
+            }
+
+            self.apiVersion = results[0]
+            let apiType = results[1]
             
-            let apiVersionNode = try! xml.nodesForXPath("//*[name()='apiVersion']")
-            let apiVersion = apiVersionNode[0].stringValue!
-            
-            let apiTypeNode = try! xml.nodesForXPath("//*[name()='apiType']")
-            let apiType = apiTypeNode[0].stringValue!
-            
-            print("api version is \(apiVersion) / \(apiType)")
-            self.apiVersion = apiVersion
+            print("api version is \(self.apiVersion) / \(apiType)")
             if apiType == "HostAgent" {
                 self.serverType = ServerType.Host
             }
             
-            let sessionManagerNode = try! xml.nodesForXPath("//*[name()='sessionManager']")
-            self.sessionManagerName = sessionManagerNode[0].stringValue!
+            self.rootFolderName = results[2]
+            self.propertyCollectorName = results[3]
+            self.sessionManagerName = results[4]
 
-            let rootFolderNode = try! xml.nodesForXPath("//*[name()='rootFolder']")
-            self.rootFolderName = rootFolderNode[0].stringValue!
-
-            let propertyCollectorNode = try! xml.nodesForXPath("//*[name()='propertyCollector']")
-            self.propertyCollectorName = propertyCollectorNode[0].stringValue!
-
-            callback()
-        }.resume()
+            callback(error: error)
+        }
     }
     
     
-    func loginMsg(callback: () -> Void) {
-        let urlRequest = NSMutableURLRequest(URL: self.serverURL!)
-        urlRequest.HTTPMethod = "POST"
-        urlRequest.addValue("VMware VI Client/4.0.0", forHTTPHeaderField: "User-Agent")
-        urlRequest.HTTPBody = "<env:Envelope xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:env=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><env:Body><Login xmlns=\"urn:internalvim25\"><_this type=\"SessionManager\">\(self.sessionManagerName.htmlEncode())</_this><userName>\(username.htmlEncode())</userName><password>\(password.htmlEncode())</password></Login></env:Body></env:Envelope>".dataUsingEncoding(NSUTF8StringEncoding)
-        
-        httpSession.dataTaskWithRequest(urlRequest) { (data, response, error) -> Void in
-            let xml = try! NSXMLDocument(data: data!, options: 0)
-            print (xml)
-            let sessionKeyNode = try! xml.nodesForXPath("//*[name()='key']")
-            self.sessionKey = sessionKeyNode[0].stringValue!
-            callback()
-        }.resume()
+    func loginMsg(callback: (error: NSError?) -> Void) {
+        self.doRequest("<Login xmlns=\"urn:internalvim25\"><_this type=\"SessionManager\">\(self.sessionManagerName.htmlEncode())</_this><userName>\(username.htmlEncode())</userName><password>\(password.htmlEncode())</password></Login>") { (data, response, error) -> Void in
+
+            if error != nil {
+                callback(error: error)
+            }
+            
+            let results : [String]
+            do {
+                results = try self.processXML(data, getFields: [
+                    "vim:LoginResponse/vim:returnval/vim:key"
+                    ])
+            } catch let err as NSError {
+                callback(error: err)
+                return
+            }
+
+            
+            self.sessionKey = results[0]
+            callback(error: nil)
+        }
     }
     
     func acquireMksTicket(vmId: String, callback: (ticket: String, cfgFile: String, port: UInt16, sslThumbprint: String) -> Void) {
-        let urlRequest = NSMutableURLRequest(URL: self.serverURL!)
-        urlRequest.HTTPMethod = "POST"
-        urlRequest.addValue("VMware VI Client/4.0.0", forHTTPHeaderField: "User-Agent")
-        urlRequest.addValue("urn:internalvim25/\(self.apiVersion)", forHTTPHeaderField: "SOAPAction")
-        urlRequest.HTTPBody = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><soapenv:Envelope xmlns:soapenc=\"http://schemas.xmlsoap.org/soap/encoding/\" xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><soapenv:Body><AcquireTicket xmlns=\"urn:internalvim25\"><_this type=\"VirtualMachine\">\(vmId.htmlEncode())</_this><ticketType>mks</ticketType></AcquireTicket></soapenv:Body></soapenv:Envelope>".dataUsingEncoding(NSUTF8StringEncoding)
-        
-        httpSession.dataTaskWithRequest(urlRequest) { (data, response, error) -> Void in
-            let xml = try! NSXMLDocument(data: data!, options: 0)
+        self.doRequest("<AcquireTicket xmlns=\"urn:internalvim25\"><_this type=\"VirtualMachine\">\(vmId.htmlEncode())</_this><ticketType>mks</ticketType></AcquireTicket>") { (data, response, error) -> Void in
+
+            let results : [String]
+            do {
+                results = try self.processXML(data, getFields: [
+                    "vim:AcquireTicketResponse/vim:returnval/vim:ticket",
+                    "vim:AcquireTicketResponse/vim:returnval/vim:cfgFile",
+                    "vim:AcquireTicketResponse/vim:returnval/vim:port",
+                    "vim:AcquireTicketResponse/vim:returnval/vim:sslThumbprint",
+                    ])
+            } catch let err as NSError {
+                //callback(error: err)
+                return
+            }
             
-            let ticketNode = try! xml.nodesForXPath("//*[name()='ticket']")
-            let cfgFileNode = try! xml.nodesForXPath("//*[name()='cfgFile']")
-            let portNode = try! xml.nodesForXPath("//*[name()='port']")
-            let sslThumbprintNode = try! xml.nodesForXPath("//*[name()='sslThumbprint']")
-            
-            let ticket = ticketNode[0].stringValue!
-            let cfgFile = cfgFileNode[0].stringValue!
-            let port = UInt16(portNode[0].stringValue!)!
-            let sslThumbprint = sslThumbprintNode[0].stringValue!
-            callback(ticket: ticket, cfgFile: cfgFile, port: port, sslThumbprint: sslThumbprint)
-        }.resume()
+            if let port = UInt16(results[2]) {
+                callback(
+                    ticket: results[0],
+                    cfgFile: results[1],
+                    port: port,
+                    sslThumbprint: results[3]
+                )
+            } else {
+                //callback(err: NSError(domain: "myapp", code: VMError.ResponseParseError.rawValue, userInfo: nil))
+            }
+        }
     }
 
     func powerOnVM(vmId: String, callback: (progress: Int, status: String) -> Void) {
-        let urlRequest = NSMutableURLRequest(URL: self.serverURL!)
-        urlRequest.HTTPMethod = "POST"
-        urlRequest.addValue("VMware VI Client/4.0.0", forHTTPHeaderField: "User-Agent")
-        urlRequest.addValue("urn:internalvim25/\(self.apiVersion)", forHTTPHeaderField: "SOAPAction")
-        urlRequest.HTTPBody = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><env:Envelope xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:env=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><env:Body><PowerOnVM_Task xmlns=\"urn:internalvim25\"><_this type=\"VirtualMachine\">\(vmId.htmlEncode())</_this></PowerOnVM_Task></env:Body></env:Envelope>".dataUsingEncoding(NSUTF8StringEncoding)
-        
-        httpSession.dataTaskWithRequest(urlRequest) { (data, response, error) -> Void in
-            let xml = try! NSXMLDocument(data: data!, options: 0)
-            let returnValNode = try! xml.nodesForXPath("//*[name()='returnval']")
-            let task = returnValNode[0].stringValue!
+        self.doRequest("<PowerOnVM_Task xmlns=\"urn:internalvim25\"><_this type=\"VirtualMachine\">\(vmId.htmlEncode())</_this></PowerOnVM_Task>") { (data, response, error) -> Void in
+            
+            let results : [String]
+            do {
+                results = try self.processXML(data, getFields: [
+                    "vim:PowerOnVM_TaskResponse/vim:returnval"
+                    ])
+            } catch let err as NSError {
+                //callback(error: err)
+                return
+            }
+
+            let task = results[0]
             self.waitForTask(task) { (progress, status) -> Void in
                 callback(progress: progress, status: status)
             }
-        }.resume()
+        }
     }
     
     func waitForTask(taskId: String, callback: (progress: Int, status: String) -> Void) {
-        let urlRequest = NSMutableURLRequest(URL: self.serverURL!)
-        urlRequest.HTTPMethod = "POST"
-        urlRequest.addValue("VMware VI Client/4.0.0", forHTTPHeaderField: "User-Agent")
-        urlRequest.addValue("urn:internalvim25/\(self.apiVersion)", forHTTPHeaderField: "SOAPAction")
-        urlRequest.HTTPBody = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><env:Envelope xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:env=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><env:Body><CreateFilter xmlns=\"urn:internalvim25\"><_this type=\"PropertyCollector\">\(self.propertyCollectorName)</_this><spec xsi:type=\"PropertyFilterSpec\"><propSet xsi:type=\"PropertySpec\"><type>Task</type><all>0</all><pathSet>info.progress</pathSet><pathSet>info.state</pathSet><pathSet>info.entityName</pathSet><pathSet>info.error</pathSet><pathSet>info.name</pathSet></propSet><objectSet xsi:type=\"ObjectSpec\"><obj type=\"Task\">\(taskId.htmlEncode())</obj></objectSet></spec><partialUpdates>0</partialUpdates></CreateFilter></env:Body></env:Envelope>".dataUsingEncoding(NSUTF8StringEncoding)
-        httpSession.dataTaskWithRequest(urlRequest) { (data, response, error) -> Void in
+        self.doRequest(
+            "<CreateFilter xmlns=\"urn:internalvim25\">" +
+                "<_this type=\"PropertyCollector\">\(self.propertyCollectorName)</_this>" +
+                "<spec xsi:type=\"PropertyFilterSpec\">" +
+                    "<propSet xsi:type=\"PropertySpec\">" +
+                        "<type>Task</type>" +
+                        "<all>0</all>" +
+                        "<pathSet>info.progress</pathSet>" +
+                        "<pathSet>info.state</pathSet>" +
+                        "<pathSet>info.entityName</pathSet>" +
+                        "<pathSet>info.error</pathSet>" +
+                        "<pathSet>info.name</pathSet>" +
+                    "</propSet>" +
+                    "<objectSet xsi:type=\"ObjectSpec\">" +
+                        "<obj type=\"Task\">\(taskId.htmlEncode())</obj>" +
+                    "</objectSet>" +
+                "</spec>" +
+                "<partialUpdates>0</partialUpdates>" +
+            "</CreateFilter>"
+        ) { (data, response, error) -> Void in
+
             //let xml = try! NSXMLDocument(data: data!, options: 0)
             //self.pollTask() { (progress, status) -> Void in
             //    callback(progress: progress, status: status)
             //}
-        }.resume()
-        
+        }
     }
     
     func pollForUpdates(callback: (progress: Int, status: String) -> Void) {
-        let urlRequest = NSMutableURLRequest(URL: self.serverURL!)
-        urlRequest.HTTPMethod = "POST"
-        urlRequest.addValue("VMware VI Client/4.0.0", forHTTPHeaderField: "User-Agent")
-        urlRequest.addValue("urn:internalvim25/\(self.apiVersion)", forHTTPHeaderField: "SOAPAction")
-        urlRequest.HTTPBody = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><env:Envelope xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:env=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><env:Body><WaitForUpdates xmlns=\"urn:internalvim25\"><_this type=\"PropertyCollector\">\(self.propertyCollectorName)</_this><version>\(self.lastUpdateVersion.htmlEncode())</version></WaitForUpdates></env:Body></env:Envelope>".dataUsingEncoding(NSUTF8StringEncoding)
-        self.httpSession.dataTaskWithRequest(urlRequest) { (data, response, error) -> Void in
+        self.doRequest("<WaitForUpdates xmlns=\"urn:internalvim25\"><_this type=\"PropertyCollector\">\(self.propertyCollectorName)</_this><version>\(self.lastUpdateVersion.htmlEncode())</version></WaitForUpdates>") { (data, response, error) -> Void in
+
             if error != nil && error!.code == -1001 { //time out
                 self.pollForUpdates(callback)
                 return
             }
+/*
+            let results : [String]
+            do {
+                results = try self.processXML(data, getFields: [
+                    "vim:WaitForUpdatesResponse/vim:returnval/vim:version",
+                    "vim:WaitForUpdatesResponse/vim:returnval/vim:filterSet",
+                    ])
+            } catch let err as NSError {
+                //callback(error: err)
+                return
+            }
+*/
             let xml = try! NSXMLDocument(data: data!, options: 0)
             let ns = NSXMLElement.namespaceWithName("vim", stringValue: "urn:internalvim25")
             xml.rootElement()!.addNamespace(ns as! NSXMLNode)
@@ -185,7 +237,6 @@ class VMwareApiClient {
                 let vmSet = try! filterSet.nodesForXPath("vim:objectSet[vim:obj/@type = \"VirtualMachine\"]")
                 if vmSet.count > 0 {
                     self.updateVirtualMachines(vmSet)
-                    self.vmUpdateCallback!(virtualMachines: self.vmList)
                 }
             }
 /*
@@ -210,24 +261,27 @@ class VMwareApiClient {
             callback(progress: progress, status: state)
 */*/
             self.pollForUpdates(callback)
-        }.resume()
+        }
     }
 
     func powerOffVM(vmId: String, callback: (progress: Int, status: String) -> Void) {
-        let urlRequest = NSMutableURLRequest(URL: self.serverURL!)
-        urlRequest.HTTPMethod = "POST"
-        urlRequest.addValue("VMware VI Client/4.0.0", forHTTPHeaderField: "User-Agent")
-        urlRequest.addValue("urn:internalvim25/\(self.apiVersion)", forHTTPHeaderField: "SOAPAction")
-        urlRequest.HTTPBody = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><env:Envelope xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:env=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><env:Body><PowerOffVM_Task xmlns=\"urn:internalvim25\"><_this type=\"VirtualMachine\">\(vmId.htmlEncode())</_this></PowerOffVM_Task></env:Body></env:Envelope>".dataUsingEncoding(NSUTF8StringEncoding)
-        
-        httpSession.dataTaskWithRequest(urlRequest) { (data, response, error) -> Void in
-            let xml = try! NSXMLDocument(data: data!, options: 0)
-            let returnValNode = try! xml.nodesForXPath("//*[name()='returnval']")
-            let task = returnValNode[0].stringValue!
+        self.doRequest("<PowerOffVM_Task xmlns=\"urn:internalvim25\"><_this type=\"VirtualMachine\">\(vmId.htmlEncode())</_this></PowerOffVM_Task>") { (data, response, error) -> Void in
+
+            let results : [String]
+            do {
+                results = try self.processXML(data, getFields: [
+                    "vim:PowerOffVM_TaskResponse/vim:returnval"
+                    ])
+            } catch let err as NSError {
+                //callback(error: err)
+                return
+            }
+
+            let task = results[0]
             self.waitForTask(task) { (progress, status) -> Void in
                 callback(progress: progress, status: status)
             }
-        }.resume()
+        }
     }
 
     func getVMScreenshot(vmId: String, callback: (imageData: NSData) -> Void) {
@@ -248,6 +302,7 @@ class VMwareApiClient {
 
 
     func updateVirtualMachines(objSets: [NSXMLNode]) -> Void {
+        var dirty = false
         for objSet in objSets {
             let objNode = try! objSet.nodesForXPath("vim:obj")
             let vmId = objNode[0].stringValue!
@@ -263,40 +318,45 @@ class VMwareApiClient {
                 if self.vmList[vmId] == nil {
                     self.vmList[vmId] = [String: String]()
                     self.vmList[vmId]!["id"] = vmId
+                    dirty = true
                 }
                 
-                self.vmList[vmId]![name] = val
+                if (self.vmList[vmId]![name] != val) {
+                    self.vmList[vmId]![name] = val
+                    dirty = true
+                }
             }
 
         }
         print(self.vmList)
+        if (dirty) {
+            self.vmUpdateCallback!(virtualMachines: self.vmList)
+        }
     }
     
-    func getVMs(callback: (virtualMachines: [String: [String: String]]) -> Void) {
-        self.vmUpdateCallback = callback
-        
-        let urlRequest = NSMutableURLRequest(URL: self.serverURL!)
-        urlRequest.HTTPMethod = "POST"
-        urlRequest.addValue("urn:internalvim25/\(self.apiVersion)", forHTTPHeaderField: "SOAPAction")
-        urlRequest.HTTPBody = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><soapenv:Envelope xmlns:soapenc=\"http://schemas.xmlsoap.org/soap/encoding/\" xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><soapenv:Body><CreateContainerView xmlns=\"urn:internalvim25\"><_this type=\"ViewManager\">ViewManager</_this><container type=\"Folder\">\(self.rootFolderName.htmlEncode())</container><type>VirtualMachine</type><recursive>true</recursive></CreateContainerView></soapenv:Body></soapenv:Envelope>".dataUsingEncoding(NSUTF8StringEncoding)
-        
-        httpSession.dataTaskWithRequest(urlRequest) { (data, response, error) -> Void in
-            let xml = try! NSXMLDocument(data: data!, options: 0)
-            
-            let returnValNode = try! xml.nodesForXPath("//*[name()='returnval']")
-            let containerView = returnValNode[0].stringValue!
+    func getVMs(vmUpdateCallback: (virtualMachines: [String: [String: String]]) -> Void) {
+        self.vmUpdateCallback = vmUpdateCallback
 
-            let urlRequest = NSMutableURLRequest(URL: self.serverURL!)
-            urlRequest.HTTPMethod = "POST"
-            urlRequest.addValue("urn:internalvim25/5.5/\(self.apiVersion)", forHTTPHeaderField: "SOAPAction")
-            urlRequest.HTTPBody = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><soapenv:Envelope xmlns:soapenc=\"http://schemas.xmlsoap.org/soap/encoding/\" xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><soapenv:Body><RetrievePropertiesEx xmlns=\"urn:internalvim25\"><_this type=\"PropertyCollector\">\(self.propertyCollectorName)</_this><specSet><propSet><type>ContainerView</type><all>false</all><pathSet>view</pathSet></propSet><objectSet><obj type=\"ContainerView\">\(containerView.htmlEncode())</obj><skip>false</skip></objectSet></specSet><options></options></RetrievePropertiesEx></soapenv:Body></soapenv:Envelope>".dataUsingEncoding(NSUTF8StringEncoding)
+        self.doRequest("<CreateContainerView xmlns=\"urn:internalvim25\"><_this type=\"ViewManager\">ViewManager</_this><container type=\"Folder\">\(self.rootFolderName.htmlEncode())</container><type>VirtualMachine</type><recursive>true</recursive></CreateContainerView>") { (data, response, error) -> Void in
+
+            let results : [String]
+            do {
+                results = try self.processXML(data, getFields: [
+                    "vim:CreateContainerViewResponse/vim:returnval"
+                    ])
+            } catch let err as NSError {
+                //callback(error: err)
+                return
+            }
+
+            let containerView = results[0]
             
-            self.httpSession.dataTaskWithRequest(urlRequest) { (data, response, error) -> Void in
+            self.doRequest("<RetrievePropertiesEx xmlns=\"urn:internalvim25\"><_this type=\"PropertyCollector\">\(self.propertyCollectorName)</_this><specSet><propSet><type>ContainerView</type><all>false</all><pathSet>view</pathSet></propSet><objectSet><obj type=\"ContainerView\">\(containerView.htmlEncode())</obj><skip>false</skip></objectSet></specSet><options></options></RetrievePropertiesEx>") { (data, response, error) -> Void in
+
                 let xml = try! NSXMLDocument(data: data!, options: 0)
                 
-                var xmlResponse = "<env:Envelope xmlns:env=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">" +
-                        "<env:Body>" +
-                            "<CreateFilter xmlns=\"urn:internalvim25\">" +
+                var xmlResponse =
+                    "<CreateFilter xmlns=\"urn:internalvim25\">" +
                                 "<_this type=\"PropertyCollector\">\(self.propertyCollectorName)</_this>" +
                                 "<spec xsi:type=\"PropertyFilterSpec\">" +
                                     "<propSet xsi:type=\"PropertySpec\">" +
@@ -317,15 +377,9 @@ class VMwareApiClient {
                 xmlResponse = xmlResponse +
                                 "</spec>" +
                                 "<partialUpdates>0</partialUpdates>" +
-                            "</CreateFilter>" +
-                        "</env:Body>" +
-                    "</env:Envelope>"
+                            "</CreateFilter>"
                 //print(xmlResponse)
-                let urlRequest = NSMutableURLRequest(URL: self.serverURL!)
-                urlRequest.HTTPMethod = "POST"
-                urlRequest.addValue("urn:internalvim25/\(self.apiVersion)", forHTTPHeaderField: "SOAPAction")
-                urlRequest.HTTPBody = xmlResponse.dataUsingEncoding(NSUTF8StringEncoding)
-                self.httpSession.dataTaskWithRequest(urlRequest) { (data, response, error) -> Void in
+                self.doRequest(xmlResponse) { (data, response, error) -> Void in
                     /*
                     var virtualMachines = [[String: String]]()
                     let xml = try! NSXMLDocument(data: data!, options: 0)
@@ -351,8 +405,71 @@ class VMwareApiClient {
                         virtualMachines.append(virtualMachine)
                     }
                     callback(virtualMachines: virtualMachines) */ */
-                }.resume()
-            }.resume()
+                }
+            }
+        }
+    }
+    
+    func doRequest(request: String, callback: (data: NSData?, response: NSURLResponse?, error: NSError?) -> Void) {
+        
+        let urlRequest = NSMutableURLRequest(URL: self.serverURL!)
+        urlRequest.HTTPMethod = "POST"
+        urlRequest.addValue("VMware VI Client/4.0.0", forHTTPHeaderField: "User-Agent")
+        urlRequest.addValue("urn:internalvim25/\(self.apiVersion)", forHTTPHeaderField: "SOAPAction")
+        urlRequest.HTTPBody = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><env:Envelope xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:env=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><env:Body>\(request)</env:Body></env:Envelope>".dataUsingEncoding(NSUTF8StringEncoding)
+        
+        httpSession.dataTaskWithRequest(urlRequest) { (data, response, error) -> Void in
+            callback(data: data, response: response, error: error)
         }.resume()
+    }
+    
+    func processXML(data: NSData?, getFields: [String]) throws -> [String] {
+        let xml = try NSXMLDocument(data: data!, options: 0)
+        let ns = NSXMLElement.namespaceWithName("vim", stringValue: "urn:internalvim25")
+        xml.rootElement()!.addNamespace(ns as! NSXMLNode)
+
+        
+        let soapBody = try xml.nodesForXPath("/soapenv:Envelope/soapenv:Body")
+        guard soapBody.count > 0 else {
+            throw NSError(domain: "myapp", code: VMError.ResponseParseError.rawValue, userInfo: nil)
+        }
+
+        let fault = try soapBody[0].nodesForXPath("soapenv:Fault")
+        guard fault.count == 0 else {
+            let detailNode = try fault[0].nodesForXPath("detail")
+            if detailNode.count > 0 && detailNode[0].children != nil && detailNode[0].children!.count > 0 {
+                if let name = detailNode[0].children![0].name {
+                    if name == "InvalidLoginFault" {
+                        throw NSError(domain: "myapp", code: VMError.InvalidLoginFault.rawValue, userInfo: nil)
+                    }
+                }
+            }
+        
+            let faultcodeNode = try fault[0].nodesForXPath("faultcode")
+            let faultstringNode = try fault[0].nodesForXPath("faultstring")
+        
+            var dict = [NSObject: AnyObject]()
+            if faultcodeNode.count > 0 {
+                dict["faultcode"] = faultcodeNode[0].stringValue
+            }
+            if faultstringNode.count > 0 {
+                dict["faultstring"] = faultstringNode[0].stringValue
+            }
+            if detailNode.count > 0 {
+                dict["detailXML"] = detailNode[0].XMLString
+            }
+            throw NSError(domain: "myapp", code: VMError.UnknownError.rawValue, userInfo: dict)
+        }
+        
+        var result = [String]()
+        for xpath in getFields {
+            let nodes = try soapBody[0].nodesForXPath(xpath)
+            guard nodes.count > 0 && nodes[0].stringValue != nil else {
+                throw NSError(domain: "myapp", code: VMError.ResponseParseError.rawValue, userInfo: nil)
+            }
+            result.append(nodes[0].stringValue!)
+        }
+        
+        return result
     }
 }

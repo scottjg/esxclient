@@ -14,10 +14,17 @@
         <customObject id="-3" userLabel="Application" customClass="NSObject"/>
         <customObject id="Voe-Tx-rLC" customClass="AppDelegate" customModule="esxclient" customModuleProvider="target">
             <connections>
+                <outlet property="connectButton" destination="Mst-L0-AJR" id="i07-Pz-yON"/>
+                <outlet property="hostField" destination="hiw-gh-XRP" id="9Pi-CA-qrr"/>
+                <outlet property="loginImage" destination="1Rx-UL-fXa" id="DIb-0C-BLI"/>
+                <outlet property="loginProgressSpinner" destination="wzS-XH-Bc1" id="0T6-Da-udM"/>
+                <outlet property="loginWindow" destination="cKr-ga-bc6" id="i3l-YI-DBE"/>
+                <outlet property="passwordField" destination="x12-kt-Lg7" id="QO7-T5-TzO"/>
                 <outlet property="powerOffButton" destination="sto-2n-pJ6" id="8Uj-Fh-6zw"/>
                 <outlet property="powerOnButton" destination="01T-uP-6pw" id="1Cg-jf-hDZ"/>
                 <outlet property="progressCircle" destination="foh-JS-zpy" id="mKS-bg-T8c"/>
                 <outlet property="sidebarList" destination="vzj-cc-VAb" id="hcW-xD-z8N"/>
+                <outlet property="usernameField" destination="Kh8-r6-Yzz" id="IhW-lV-rai"/>
                 <outlet property="viewConsoleButton" destination="4PI-me-1CZ" id="Ien-Th-boJ"/>
                 <outlet property="vmGuestIPField" destination="twQ-Qt-ccu" id="I0m-eR-vA7"/>
                 <outlet property="vmNameField" destination="sEP-Ld-RwP" id="wVK-f3-elu"/>
@@ -676,7 +683,7 @@
                 </menuItem>
             </items>
         </menu>
-        <window title="esxclient" allowsToolTipsWhenApplicationIsInactive="NO" autorecalculatesKeyViewLoop="NO" releasedWhenClosed="NO" animationBehavior="default" id="QvC-M9-y7g">
+        <window title="esxclient" allowsToolTipsWhenApplicationIsInactive="NO" autorecalculatesKeyViewLoop="NO" releasedWhenClosed="NO" visibleAtLaunch="NO" animationBehavior="default" id="QvC-M9-y7g">
             <windowStyleMask key="styleMask" titled="YES" closable="YES" miniaturizable="YES" resizable="YES"/>
             <windowPositionMask key="initialPositionMask" leftStrut="YES" rightStrut="YES" topStrut="YES" bottomStrut="YES"/>
             <rect key="contentRect" x="335" y="390" width="707" height="219"/>
@@ -906,8 +913,85 @@
             </view>
             <point key="canvasLocation" x="358.5" y="203.5"/>
         </window>
+        <window title="Login" allowsToolTipsWhenApplicationIsInactive="NO" autorecalculatesKeyViewLoop="NO" restorable="NO" oneShot="NO" releasedWhenClosed="NO" showsToolbarButton="NO" frameAutosaveName="" animationBehavior="default" id="cKr-ga-bc6">
+            <windowStyleMask key="styleMask" titled="YES" closable="YES" miniaturizable="YES"/>
+            <windowPositionMask key="initialPositionMask" leftStrut="YES" rightStrut="YES" topStrut="YES" bottomStrut="YES"/>
+            <rect key="contentRect" x="512" y="433" width="361" height="161"/>
+            <rect key="screenRect" x="0.0" y="0.0" width="1280" height="777"/>
+            <view key="contentView" id="i1a-Yu-33J">
+                <rect key="frame" x="0.0" y="0.0" width="361" height="161"/>
+                <autoresizingMask key="autoresizingMask"/>
+                <subviews>
+                    <textField verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="hiw-gh-XRP">
+                        <rect key="frame" x="104" y="119" width="237" height="22"/>
+                        <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" placeholderString="vSphere Host" drawsBackground="YES" id="dOJ-TK-Yxp">
+                            <font key="font" metaFont="system"/>
+                            <color key="textColor" name="textColor" catalog="System" colorSpace="catalog"/>
+                            <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
+                        </textFieldCell>
+                        <connections>
+                            <outlet property="delegate" destination="Voe-Tx-rLC" id="CIy-03-Xa7"/>
+                        </connections>
+                    </textField>
+                    <button verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="Mst-L0-AJR">
+                        <rect key="frame" x="255" y="13" width="92" height="32"/>
+                        <buttonCell key="cell" type="push" title="Connect" bezelStyle="rounded" alignment="center" enabled="NO" borderStyle="border" imageScaling="proportionallyDown" inset="2" id="nM7-Aj-RFg">
+                            <behavior key="behavior" pushIn="YES" lightByBackground="YES" lightByGray="YES"/>
+                            <font key="font" metaFont="system"/>
+                            <connections>
+                                <action selector="connectLoginButtonClicked:" target="Voe-Tx-rLC" id="Sdg-OU-lL7"/>
+                            </connections>
+                        </buttonCell>
+                    </button>
+                    <button verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="QjB-3X-WJ2">
+                        <rect key="frame" x="163" y="13" width="92" height="32"/>
+                        <buttonCell key="cell" type="push" title="Cancel" bezelStyle="rounded" alignment="center" borderStyle="border" imageScaling="proportionallyDown" inset="2" id="AkJ-Nd-lpr">
+                            <behavior key="behavior" pushIn="YES" lightByBackground="YES" lightByGray="YES"/>
+                            <font key="font" metaFont="system"/>
+                            <string key="keyEquivalent" base64-UTF8="YES">
+Gw
+</string>
+                        </buttonCell>
+                    </button>
+                    <progressIndicator wantsLayer="YES" horizontalHuggingPriority="750" verticalHuggingPriority="750" fixedFrame="YES" maxValue="100" displayedWhenStopped="NO" bezeled="NO" indeterminate="YES" style="spinning" translatesAutoresizingMaskIntoConstraints="NO" id="wzS-XH-Bc1">
+                        <rect key="frame" x="42" y="82" width="32" height="32"/>
+                    </progressIndicator>
+                    <textField verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="Kh8-r6-Yzz">
+                        <rect key="frame" x="104" y="87" width="237" height="22"/>
+                        <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" state="on" borderStyle="bezel" placeholderString="Username" drawsBackground="YES" id="zdU-UI-iIg">
+                            <font key="font" metaFont="system"/>
+                            <color key="textColor" name="textColor" catalog="System" colorSpace="catalog"/>
+                            <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
+                        </textFieldCell>
+                        <connections>
+                            <outlet property="delegate" destination="Voe-Tx-rLC" id="Kfo-nL-hm8"/>
+                        </connections>
+                    </textField>
+                    <imageView horizontalHuggingPriority="251" verticalHuggingPriority="251" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="1Rx-UL-fXa">
+                        <rect key="frame" x="20" y="55" width="76" height="86"/>
+                        <imageCell key="cell" refusesFirstResponder="YES" alignment="left" imageScaling="proportionallyUpOrDown" image="NSUserAccounts" id="EJI-4k-lLZ"/>
+                    </imageView>
+                    <secureTextField verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="x12-kt-Lg7">
+                        <rect key="frame" x="104" y="55" width="237" height="22"/>
+                        <secureTextFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" borderStyle="bezel" placeholderString="Password" drawsBackground="YES" usesSingleLineMode="YES" id="C21-p9-pa8">
+                            <font key="font" metaFont="system"/>
+                            <color key="textColor" name="textColor" catalog="System" colorSpace="catalog"/>
+                            <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
+                            <allowedInputSourceLocales>
+                                <string>NSAllRomanInputSourcesLocaleIdentifier</string>
+                            </allowedInputSourceLocales>
+                        </secureTextFieldCell>
+                        <connections>
+                            <outlet property="delegate" destination="Voe-Tx-rLC" id="px4-OB-b0F"/>
+                        </connections>
+                    </secureTextField>
+                </subviews>
+            </view>
+            <point key="canvasLocation" x="185.5" y="482.5"/>
+        </window>
     </objects>
     <resources>
         <image name="NSActionTemplate" width="14" height="14"/>
+        <image name="NSUserAccounts" width="32" height="32"/>
     </resources>
 </document>
