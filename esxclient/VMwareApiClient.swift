@@ -72,7 +72,7 @@ class VMwareApiClient {
 
             let results : [String]
             do {
-                results = try self.processXML(data, getFields: [
+                results = try self.getXMLFields(data!, getFields: [
                     "vim:RetrieveServiceContentResponse/vim:returnval/vim:about/vim:apiVersion",
                     "vim:RetrieveServiceContentResponse/vim:returnval/vim:about/vim:apiType",
                     "vim:RetrieveServiceContentResponse/vim:returnval/vim:rootFolder",
@@ -110,7 +110,7 @@ class VMwareApiClient {
             
             let results : [String]
             do {
-                results = try self.processXML(data, getFields: [
+                results = try self.getXMLFields(data!, getFields: [
                     "vim:LoginResponse/vim:returnval/vim:key"
                     ])
             } catch let err as NSError {
@@ -127,9 +127,13 @@ class VMwareApiClient {
     func acquireMksTicket(vmId: String, callback: (ticket: String, cfgFile: String, port: UInt16, sslThumbprint: String) -> Void) {
         self.doRequest("<AcquireTicket xmlns=\"urn:internalvim25\"><_this type=\"VirtualMachine\">\(vmId.htmlEncode())</_this><ticketType>mks</ticketType></AcquireTicket>") { (data, response, error) -> Void in
 
+            //if error != nil {
+            //    callback(error: error)
+            //}
+
             let results : [String]
             do {
-                results = try self.processXML(data, getFields: [
+                results = try self.getXMLFields(data!, getFields: [
                     "vim:AcquireTicketResponse/vim:returnval/vim:ticket",
                     "vim:AcquireTicketResponse/vim:returnval/vim:cfgFile",
                     "vim:AcquireTicketResponse/vim:returnval/vim:port",
@@ -153,12 +157,12 @@ class VMwareApiClient {
         }
     }
 
-    func powerOnVM(vmId: String, callback: (progress: Int, status: String) -> Void) {
+    func powerOnVM(vmId: String) {
         self.doRequest("<PowerOnVM_Task xmlns=\"urn:internalvim25\"><_this type=\"VirtualMachine\">\(vmId.htmlEncode())</_this></PowerOnVM_Task>") { (data, response, error) -> Void in
             
             let results : [String]
             do {
-                results = try self.processXML(data, getFields: [
+                results = try self.getXMLFields(data!, getFields: [
                     "vim:PowerOnVM_TaskResponse/vim:returnval"
                     ])
             } catch let err as NSError {
@@ -167,13 +171,11 @@ class VMwareApiClient {
             }
 
             let task = results[0]
-            self.waitForTask(task) { (progress, status) -> Void in
-                callback(progress: progress, status: status)
-            }
+            self.waitForTask(task)
         }
     }
     
-    func waitForTask(taskId: String, callback: (progress: Int, status: String) -> Void) {
+    func waitForTask(taskId: String) {
         self.doRequest(
             "<CreateFilter xmlns=\"urn:internalvim25\">" +
                 "<_this type=\"PropertyCollector\">\(self.propertyCollectorName)</_this>" +
@@ -195,7 +197,14 @@ class VMwareApiClient {
             "</CreateFilter>"
         ) { (data, response, error) -> Void in
 
-            //let xml = try! NSXMLDocument(data: data!, options: 0)
+            do {
+                try self.getXMLFields(data!, getFields: [
+                    "vim:CreateFilterResponse/vim:returnval"
+                    ])
+            } catch let err as NSError {
+                //callback(error: err)
+                return
+            }
             //self.pollTask() { (progress, status) -> Void in
             //    callback(progress: progress, status: status)
             //}
@@ -209,67 +218,42 @@ class VMwareApiClient {
                 self.pollForUpdates(callback)
                 return
             }
-/*
-            let results : [String]
+
             do {
-                results = try self.processXML(data, getFields: [
-                    "vim:WaitForUpdatesResponse/vim:returnval/vim:version",
-                    "vim:WaitForUpdatesResponse/vim:returnval/vim:filterSet",
-                    ])
+                let xml = try self.processXML(data!)
+                let versionNode = try xml.body.nodesForXPath("vim:WaitForUpdatesResponse/vim:returnval/vim:version")
+                self.lastUpdateVersion = versionNode[0].stringValue!
+
+                let filterSets = try xml.body.nodesForXPath("vim:WaitForUpdatesResponse/vim:returnval/vim:filterSet")
+                for filterSet in filterSets {
+                    let filterNode = try filterSet.nodesForXPath("vim:filter")
+                    let propertyFilterId = filterNode[0].stringValue!
+
+                    let vmSet = try filterSet.nodesForXPath("vim:objectSet[vim:obj/@type = \"VirtualMachine\"]")
+                    if vmSet.count > 0 {
+                        try self.updateVirtualMachines(vmSet)
+                    }
+
+                    let taskSet = try filterSet.nodesForXPath("vim:objectSet[vim:obj/@type = \"Task\"]")
+                    if taskSet.count > 0 {
+                        try self.updateTask(taskSet, filterId: propertyFilterId, callback: callback)
+                    }
+                }
             } catch let err as NSError {
                 //callback(error: err)
                 return
             }
-*/
-            let xml = try! NSXMLDocument(data: data!, options: 0)
-            let ns = NSXMLElement.namespaceWithName("vim", stringValue: "urn:internalvim25")
-            xml.rootElement()!.addNamespace(ns as! NSXMLNode)
-            print(xml)
 
-            let versionNode = try! xml.nodesForXPath("/soapenv:Envelope/soapenv:Body/vim:WaitForUpdatesResponse/vim:returnval/vim:version")
-            self.lastUpdateVersion = versionNode[0].stringValue!
-
-            let filterSets = try! xml.nodesForXPath("/soapenv:Envelope/soapenv:Body/vim:WaitForUpdatesResponse/vim:returnval/vim:filterSet")
-            for filterSet in filterSets {
-                let filterNode = try! filterSet.nodesForXPath("vim:filter")
-                let propertyFilterId = filterNode[0].stringValue!
-
-                let vmSet = try! filterSet.nodesForXPath("vim:objectSet[vim:obj/@type = \"VirtualMachine\"]")
-                if vmSet.count > 0 {
-                    self.updateVirtualMachines(vmSet)
-                }
-            }
-/*
-            
-            let changesetNodes = try! xml.nodesForXPath("//*[name()='changeSet']")
-            var progress = 0
-            var state = ""
-            for changesetNode in changesetNodes {
-                let name = try! changesetNode.nodesForXPath("*[name()='name']")
-                if (name[0].stringValue! == "info.state") {
-                    let valNode = try! changesetNode.nodesForXPath("*[name()='val']")
-                    state = valNode[0].stringValue!
-                } else if (name[0].stringValue! == "info.progress") {
-                    let valNode = try! changesetNode.nodesForXPath("*[name()='val']")
-                    if valNode.count > 0 {
-                        let val = valNode[0].stringValue!
-                        progress = Int(val)!
-                    }
-                }
-            }
-
-            callback(progress: progress, status: state)
-*/*/
             self.pollForUpdates(callback)
         }
     }
 
-    func powerOffVM(vmId: String, callback: (progress: Int, status: String) -> Void) {
+    func powerOffVM(vmId: String) {
         self.doRequest("<PowerOffVM_Task xmlns=\"urn:internalvim25\"><_this type=\"VirtualMachine\">\(vmId.htmlEncode())</_this></PowerOffVM_Task>") { (data, response, error) -> Void in
 
             let results : [String]
             do {
-                results = try self.processXML(data, getFields: [
+                results = try self.getXMLFields(data!, getFields: [
                     "vim:PowerOffVM_TaskResponse/vim:returnval"
                     ])
             } catch let err as NSError {
@@ -278,9 +262,7 @@ class VMwareApiClient {
             }
 
             let task = results[0]
-            self.waitForTask(task) { (progress, status) -> Void in
-                callback(progress: progress, status: status)
-            }
+            self.waitForTask(task)
         }
     }
 
@@ -301,18 +283,82 @@ class VMwareApiClient {
     }
 
 
-    func updateVirtualMachines(objSets: [NSXMLNode]) -> Void {
+    func updateTask(objSets: [NSXMLNode], filterId: String, callback: (progress: Int, status: String) -> Void) throws -> Void {
+        for objSet in objSets {
+            let objNode = try objSet.nodesForXPath("vim:obj")
+            guard objNode.count > 0 else {
+                throw NSError(domain: "myapp", code: VMError.ResponseParseError.rawValue, userInfo: nil)
+            }
+            
+            guard let taskId = objNode[0].stringValue else {
+                throw NSError(domain: "myapp", code: VMError.ResponseParseError.rawValue, userInfo: nil)
+            }
+            
+            let changeSets = try objSet.nodesForXPath("vim:changeSet")
+            var progress = -1
+            var status = ""
+            for changeSet in changeSets {
+                let nameNode = try changeSet.nodesForXPath("vim:name")
+                guard let name = nameNode[0].stringValue else {
+                    throw NSError(domain: "myapp", code: VMError.ResponseParseError.rawValue, userInfo: nil)
+                }
+
+                if name == "info.progress" {
+                    let valNode = try changeSet.nodesForXPath("vim:val")
+                    if valNode.count > 0 && valNode[0].stringValue != nil {
+                        let progressStr = valNode[0].stringValue!
+                        if let progressInt = Int(progressStr) {
+                            progress = progressInt
+                        }
+                    }
+                }
+
+                if name == "info.state" {
+                    let valNode = try changeSet.nodesForXPath("vim:val")
+                    if valNode.count > 0 && valNode[0].stringValue != nil {
+                        status = valNode[0].stringValue!
+                    }
+                }
+            }
+            
+            if status != "running" {
+                progress = 100
+                finishTask(taskId)
+            }
+            
+            if progress >= 0 {
+                callback(progress: progress, status: status)
+            }
+        }
+    }
+
+    func finishTask(propertyFilterId: String) {
+        self.doRequest("<DestroyPropertyFilter xmlns=\"urn:internalvim25\"><_this type=\"PropertyFilter\">\(propertyFilterId.htmlEncode())</_this></DestroyPropertyFilter>") { (data, response, error) -> Void in
+            
+            do {
+                try self.getXMLFields(data!, getFields: [
+                    "vim:DestroyPropertyFilterResponse/vim:returnval"
+                    ])
+            } catch let err as NSError {
+                //callback(error: err)
+                return
+            }
+        }
+
+    }
+    
+    func updateVirtualMachines(objSets: [NSXMLNode]) throws -> Void {
         var dirty = false
         for objSet in objSets {
-            let objNode = try! objSet.nodesForXPath("vim:obj")
+            let objNode = try objSet.nodesForXPath("vim:obj")
             let vmId = objNode[0].stringValue!
             
-            let changeSets = try! objSet.nodesForXPath("vim:changeSet")
+            let changeSets = try objSet.nodesForXPath("vim:changeSet")
             for changeSet in changeSets {
-                let nameNode = try! changeSet.nodesForXPath("vim:name")
+                let nameNode = try changeSet.nodesForXPath("vim:name")
                 let name = nameNode[0].stringValue!
 
-                let valNode = try! changeSet.nodesForXPath("vim:val")
+                let valNode = try changeSet.nodesForXPath("vim:val")
                 let val = valNode.count == 0 ? "" : valNode[0].stringValue!
                 
                 if self.vmList[vmId] == nil {
@@ -326,9 +372,8 @@ class VMwareApiClient {
                     dirty = true
                 }
             }
-
         }
-        print(self.vmList)
+        //print(self.vmList)
         if (dirty) {
             self.vmUpdateCallback!(virtualMachines: self.vmList)
         }
@@ -341,7 +386,7 @@ class VMwareApiClient {
 
             let results : [String]
             do {
-                results = try self.processXML(data, getFields: [
+                results = try self.getXMLFields(data!, getFields: [
                     "vim:CreateContainerViewResponse/vim:returnval"
                     ])
             } catch let err as NSError {
@@ -351,12 +396,29 @@ class VMwareApiClient {
 
             let containerView = results[0]
             
-            self.doRequest("<RetrievePropertiesEx xmlns=\"urn:internalvim25\"><_this type=\"PropertyCollector\">\(self.propertyCollectorName)</_this><specSet><propSet><type>ContainerView</type><all>false</all><pathSet>view</pathSet></propSet><objectSet><obj type=\"ContainerView\">\(containerView.htmlEncode())</obj><skip>false</skip></objectSet></specSet><options></options></RetrievePropertiesEx>") { (data, response, error) -> Void in
+            self.doRequest(
+                "<RetrievePropertiesEx xmlns=\"urn:internalvim25\">" +
+                    "<_this type=\"PropertyCollector\">\(self.propertyCollectorName)</_this>" +
+                    "<specSet>" +
+                        "<propSet>" +
+                            "<type>ContainerView</type>" +
+                            "<all>false</all>" +
+                            "<pathSet>view</pathSet>" +
+                        "</propSet>" +
+                        "<objectSet>" +
+                            "<obj type=\"ContainerView\">\(containerView.htmlEncode())</obj>" +
+                            "<skip>false</skip>" +
+                        "</objectSet>" +
+                    "</specSet>" +
+                    "<options></options>" +
+                "</RetrievePropertiesEx>"
+            ) { (data, response, error) -> Void in
+                var xmlResponse = ""
 
-                let xml = try! NSXMLDocument(data: data!, options: 0)
-                
-                var xmlResponse =
-                    "<CreateFilter xmlns=\"urn:internalvim25\">" +
+                do {
+                    let xml = try self.processXML(data!)
+                    xmlResponse +=
+                        "<CreateFilter xmlns=\"urn:internalvim25\">" +
                                 "<_this type=\"PropertyCollector\">\(self.propertyCollectorName)</_this>" +
                                 "<spec xsi:type=\"PropertyFilterSpec\">" +
                                     "<propSet xsi:type=\"PropertySpec\">" +
@@ -366,45 +428,34 @@ class VMwareApiClient {
                                         "<pathSet>guest.ipAddress</pathSet>" +
                                     "</propSet>"
 
-                let vmNodes = try! xml.nodesForXPath("//*[name()='val']/*[name()='ManagedObjectReference']")
-                for vmNode in vmNodes {
-                    let vmId = vmNode.stringValue!
-                    xmlResponse = xmlResponse + "<objectSet xsi:type=\"ObjectSpec\">" +
-                                                    "<obj type=\"VirtualMachine\">\(vmId.htmlEncode())</obj>" +
-                                                "</objectSet>"
+                    let vmNodes = try xml.body.nodesForXPath("//*[name()='val']/*[name()='ManagedObjectReference']")
+                    for vmNode in vmNodes {
+                        let vmId = vmNode.stringValue!
+                        xmlResponse +=
+                                    "<objectSet xsi:type=\"ObjectSpec\">" +
+                                        "<obj type=\"VirtualMachine\">\(vmId.htmlEncode())</obj>" +
+                                    "</objectSet>"
+                    }
+
+                    xmlResponse = xmlResponse +
+                            "</spec>" +
+                            "<partialUpdates>0</partialUpdates>" +
+                        "</CreateFilter>"
+                } catch let err as NSError {
+                    //callback(error: err)
+                    return
                 }
 
-                xmlResponse = xmlResponse +
-                                "</spec>" +
-                                "<partialUpdates>0</partialUpdates>" +
-                            "</CreateFilter>"
-                //print(xmlResponse)
                 self.doRequest(xmlResponse) { (data, response, error) -> Void in
-                    /*
-                    var virtualMachines = [[String: String]]()
-                    let xml = try! NSXMLDocument(data: data!, options: 0)
-                    print(xml)
-                    let returnValNodes = try! xml.nodesForXPath("//*[name()='returnval']")
-                    for returnValNode in returnValNodes {
-                        var virtualMachine = [String: String]()
-                        
-                        let vmIdNode = try! returnValNode.nodesForXPath("*[name()='obj']")
-                        let vmId = vmIdNode[0].stringValue!
-                        virtualMachine["id"] = vmId
-                        
-                        let props = try! returnValNode.nodesForXPath("*[name()='propSet']")
-                        for prop in props {
-                            let nameNode = try! prop.nodesForXPath("*[name()='name']")
-                            let name = nameNode[0].stringValue!
-
-                            let valNode = try! prop.nodesForXPath("*[name()='val']")
-                            let val = valNode[0].stringValue!
-
-                            virtualMachine[name] = val
-                        }
-                        virtualMachines.append(virtualMachine)
+                    do {
+                        try self.getXMLFields(data!, getFields: [
+                            "vim:CreateFilterResponse/vim:returnval"
+                            ])
+                    } catch let err as NSError {
+                        //callback(error: err)
+                        return
                     }
-                    callback(virtualMachines: virtualMachines) */ */
+
                 }
             }
         }
@@ -416,24 +467,27 @@ class VMwareApiClient {
         urlRequest.HTTPMethod = "POST"
         urlRequest.addValue("VMware VI Client/4.0.0", forHTTPHeaderField: "User-Agent")
         urlRequest.addValue("urn:internalvim25/\(self.apiVersion)", forHTTPHeaderField: "SOAPAction")
-        urlRequest.HTTPBody = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><env:Envelope xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:env=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><env:Body>\(request)</env:Body></env:Envelope>".dataUsingEncoding(NSUTF8StringEncoding)
+        urlRequest.HTTPBody = (
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" +
+            "<env:Envelope xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:env=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">" +
+                "<env:Body>\(request)</env:Body>" +
+            "</env:Envelope>").dataUsingEncoding(NSUTF8StringEncoding)
         
         httpSession.dataTaskWithRequest(urlRequest) { (data, response, error) -> Void in
             callback(data: data, response: response, error: error)
         }.resume()
     }
     
-    func processXML(data: NSData?, getFields: [String]) throws -> [String] {
-        let xml = try NSXMLDocument(data: data!, options: 0)
+    func processXML(data: NSData) throws -> (doc: NSXMLDocument, body: NSXMLNode) {
+        let xml = try NSXMLDocument(data: data, options: 0)
         let ns = NSXMLElement.namespaceWithName("vim", stringValue: "urn:internalvim25")
         xml.rootElement()!.addNamespace(ns as! NSXMLNode)
-
         
         let soapBody = try xml.nodesForXPath("/soapenv:Envelope/soapenv:Body")
         guard soapBody.count > 0 else {
             throw NSError(domain: "myapp", code: VMError.ResponseParseError.rawValue, userInfo: nil)
         }
-
+        
         let fault = try soapBody[0].nodesForXPath("soapenv:Fault")
         guard fault.count == 0 else {
             let detailNode = try fault[0].nodesForXPath("detail")
@@ -444,10 +498,10 @@ class VMwareApiClient {
                     }
                 }
             }
-        
+            
             let faultcodeNode = try fault[0].nodesForXPath("faultcode")
             let faultstringNode = try fault[0].nodesForXPath("faultstring")
-        
+            
             var dict = [NSObject: AnyObject]()
             if faultcodeNode.count > 0 {
                 dict["faultcode"] = faultcodeNode[0].stringValue
@@ -461,9 +515,14 @@ class VMwareApiClient {
             throw NSError(domain: "myapp", code: VMError.UnknownError.rawValue, userInfo: dict)
         }
         
+        return (xml, soapBody[0])
+    }
+    
+    func getXMLFields(data: NSData, getFields: [String]) throws -> [String] {
+        let xml = try processXML(data)
         var result = [String]()
         for xpath in getFields {
-            let nodes = try soapBody[0].nodesForXPath(xpath)
+            let nodes = try xml.body.nodesForXPath(xpath)
             guard nodes.count > 0 && nodes[0].stringValue != nil else {
                 throw NSError(domain: "myapp", code: VMError.ResponseParseError.rawValue, userInfo: nil)
             }

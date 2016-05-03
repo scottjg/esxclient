@@ -77,9 +77,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
                 self.loginWindow.orderOut(self)
                 self.window.makeKeyAndOrderFront(self)
             }
+
             self.vmwareApi?.pollForUpdates() { (progress, status) -> Void in
-                print(progress)
-                print(status)
+                dispatch_async(dispatch_get_main_queue()) {
+                    self.progressCircle?.doubleValue = Double(progress > 0 ? progress : 1)
+                    self.progressCircle.hidden = (progress == 100)
+                }
             }
             
             self.vmwareApi?.getVMs() { (virtualMachines) -> Void in
@@ -92,12 +95,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
                     var currRow = 1
                     self.vmList = []
                     for vm in virtualMachines.values {
-                        print(vm)
+                        //print(vm)
                         self.vmList.append(vm)
                         if vm["id"] == vmIdSelected {
                             newSelectedRow = currRow
                         }
                         currRow += 1
+                    }
+                    
+                    if newSelectedRow < 1 {
+                        newSelectedRow = 1
                     }
                     self.sidebarList.reloadData()
                     self.sidebarList.selectRowIndexes(NSIndexSet(index: newSelectedRow), byExtendingSelection: false)
@@ -161,13 +168,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
             if id != nil {
                 self.progressCircle?.doubleValue = 1.0
                 self.progressCircle.hidden = false
-                vmwareApi?.powerOnVM(id!) { (progress, status) -> Void in
-                    print(progress)
-                    dispatch_async(dispatch_get_main_queue()) {
-                        self.progressCircle?.doubleValue = Double(progress > 0 ? progress : 1)
-                        self.progressCircle.hidden = (progress == 100)
-                    }
-                }
+                vmwareApi?.powerOnVM(id!)
             }
         }
     }
@@ -180,13 +181,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
             if id != nil {
                 self.progressCircle?.doubleValue = 1.0
                 self.progressCircle.hidden = false
-                vmwareApi?.powerOffVM(id!) { (progress, status) -> Void in
-                    print(progress)
-                    dispatch_async(dispatch_get_main_queue()) {
-                        self.progressCircle?.doubleValue = Double(progress > 0 ? progress : 1)
-                        self.progressCircle.hidden = (progress == 100)
-                    }
-                }
+                vmwareApi?.powerOffVM(id!)
             }
         }
     }
@@ -249,9 +244,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
                 tf.stringValue = info["header"]!
             }
         } else {
-            v = outlineView.makeViewWithIdentifier("DataCell", owner: self) as! NSTableCellView
-            if let tf = v.textField {
-                tf.stringValue = info["name"]!
+            if info["runtime.powerState"] != nil && info["runtime.powerState"]! == "poweredOn" {
+                v = outlineView.makeViewWithIdentifier("OnCell", owner: self) as! NSTableCellView
+                if let tf = v.textField {
+                    tf.stringValue = info["name"]!
+                }
+            } else {
+                v = outlineView.makeViewWithIdentifier("OffCell", owner: self) as! NSTableCellView
+                if let tf = v.textField {
+                    tf.stringValue = info["name"]!
+                }
             }
         }
         
