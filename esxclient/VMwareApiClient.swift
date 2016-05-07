@@ -19,15 +19,22 @@ class VMwareApiClient {
     enum ServerType { case Unknown, Host, Cluster }
     var serverType : ServerType = ServerType.Unknown
     var apiVersion : String = ""
+    var fullName : String = ""
 
     var sessionManagerName : String = ""
     var sessionKey : String = ""
     var rootFolderName : String = ""
     var propertyCollectorName : String = ""
     var lastUpdateVersion = ""
+    
+    var errorHandler: (error: NSError) -> Void
+    var updateHandler: (virtualMachines: [String: [String: String]]) -> Void
+    var updateProgress: (progressPercent: Int, status: String) -> Void
 
     var vmList = [String: [String: String]]()
     var vmUpdateCallback : ((virtualMachines: [String: [String: String]]) -> Void)? = nil
+    
+    var cancelled = false
 
     enum VMError : Int {
         case InvalidLoginFault = -1
@@ -35,38 +42,57 @@ class VMwareApiClient {
         case UnknownError = -3
     }
     
-    init(username: String, password: String, host: String) {
+    init(username: String, password: String, host: String,
+         errorHandler: (error: NSError) -> Void,
+         updateHandler: (virtualMachines: [String: [String: String]]) -> Void,
+         updateProgress: (progressPercent: Int, status: String) -> Void
+         ) {
         self.username = username
         self.password = password
         self.host = host
         self.serverURL = NSURL(string: "https://\(self.host)/sdk")
 
         httpSession = NSURLSession(configuration: NSURLSession.sharedSession().configuration, delegate: NSURLSessionDelegator(), delegateQueue: NSURLSession.sharedSession().delegateQueue)
+        
+        self.errorHandler = errorHandler
+        self.updateHandler = updateHandler
+        self.updateProgress = updateProgress
     }
     
-    func login(callback: (error: NSError?) -> Void) {
-        if self.sessionManagerName == "" {
-            self.getServiceContentMsg() { (error: NSError?) -> Void in
-                if error != nil {
-                    callback(error: error)
-                    return
-                }
-
-                self.loginMsg() { (error: NSError?) -> Void in
-                    callback(error: error)
-                }
+    func startPollingForUpdates() {
+        login() { () -> Void in
+            self.pollForUpdates() { (progress, status) -> Void in
+                self.updateProgress(progressPercent: progress, status: status)
             }
-        } else {
-            self.loginMsg() { (error: NSError?) -> Void in
-                callback(error: error)
+            self.getVMs() { (virtualMachines: [String: [String: String]]) -> Void in
+                self.updateHandler(virtualMachines: virtualMachines)
             }
         }
     }
 
-    func getServiceContentMsg(callback: (error: NSError?) -> Void) {
+    
+    func login(callback: () -> Void) {
+        if self.sessionManagerName == "" {
+            self.getServiceContentMsg() { () -> Void in
+                self.loginMsg() { () -> Void in
+                    callback()
+                }
+            }
+        } else {
+            self.loginMsg() { () -> Void in
+                callback()
+            }
+        }
+    }
+
+    func title() -> String {
+        return "\(self.host) (\(self.fullName))"
+    }
+    
+    func getServiceContentMsg(callback: () -> Void) {
         self.doRequest("<RetrieveServiceContent xmlns=\"urn:internalvim25\"><_this type=\"ServiceInstance\">ServiceInstance</_this></RetrieveServiceContent>") { (data, response, error) -> Void in
-            if error != nil {
-                callback(error: error)
+            if let err = error {
+                self.errorHandler(error: err)
                 return
             }
 
@@ -75,12 +101,13 @@ class VMwareApiClient {
                 results = try self.getXMLFields(data!, getFields: [
                     "vim:RetrieveServiceContentResponse/vim:returnval/vim:about/vim:apiVersion",
                     "vim:RetrieveServiceContentResponse/vim:returnval/vim:about/vim:apiType",
+                    "vim:RetrieveServiceContentResponse/vim:returnval/vim:about/vim:fullName",
                     "vim:RetrieveServiceContentResponse/vim:returnval/vim:rootFolder",
                     "vim:RetrieveServiceContentResponse/vim:returnval/vim:propertyCollector",
                     "vim:RetrieveServiceContentResponse/vim:returnval/vim:sessionManager"
                     ])
             } catch let err as NSError {
-                callback(error: err)
+                self.errorHandler(error: err)
                 return
             }
 
@@ -92,20 +119,22 @@ class VMwareApiClient {
                 self.serverType = ServerType.Host
             }
             
-            self.rootFolderName = results[2]
-            self.propertyCollectorName = results[3]
-            self.sessionManagerName = results[4]
+            self.fullName = results[2]
+            self.rootFolderName = results[3]
+            self.propertyCollectorName = results[4]
+            self.sessionManagerName = results[5]
 
-            callback(error: error)
+            callback()
         }
     }
     
     
-    func loginMsg(callback: (error: NSError?) -> Void) {
+    func loginMsg(callback: () -> Void) {
         self.doRequest("<Login xmlns=\"urn:internalvim25\"><_this type=\"SessionManager\">\(self.sessionManagerName.htmlEncode())</_this><userName>\(username.htmlEncode())</userName><password>\(password.htmlEncode())</password></Login>") { (data, response, error) -> Void in
 
-            if error != nil {
-                callback(error: error)
+            if let err = error {
+                self.errorHandler(error: err)
+                return
             }
             
             let results : [String]
@@ -114,22 +143,23 @@ class VMwareApiClient {
                     "vim:LoginResponse/vim:returnval/vim:key"
                     ])
             } catch let err as NSError {
-                callback(error: err)
+                self.errorHandler(error: err)
                 return
             }
 
             
             self.sessionKey = results[0]
-            callback(error: nil)
+            callback()
         }
     }
     
     func acquireMksTicket(vmId: String, callback: (ticket: String, cfgFile: String, port: UInt16, sslThumbprint: String) -> Void) {
         self.doRequest("<AcquireTicket xmlns=\"urn:internalvim25\"><_this type=\"VirtualMachine\">\(vmId.htmlEncode())</_this><ticketType>mks</ticketType></AcquireTicket>") { (data, response, error) -> Void in
 
-            //if error != nil {
-            //    callback(error: error)
-            //}
+            if let err = error {
+                self.errorHandler(error: err)
+                return
+            }
 
             let results : [String]
             do {
@@ -140,7 +170,7 @@ class VMwareApiClient {
                     "vim:AcquireTicketResponse/vim:returnval/vim:sslThumbprint",
                     ])
             } catch let err as NSError {
-                //callback(error: err)
+                self.errorHandler(error: err)
                 return
             }
             
@@ -152,13 +182,18 @@ class VMwareApiClient {
                     sslThumbprint: results[3]
                 )
             } else {
-                //callback(err: NSError(domain: "myapp", code: VMError.ResponseParseError.rawValue, userInfo: nil))
+                self.errorHandler(error: NSError(domain: "myapp", code: VMError.ResponseParseError.rawValue, userInfo: nil))
             }
         }
     }
 
     func powerOnVM(vmId: String) {
         self.doRequest("<PowerOnVM_Task xmlns=\"urn:internalvim25\"><_this type=\"VirtualMachine\">\(vmId.htmlEncode())</_this></PowerOnVM_Task>") { (data, response, error) -> Void in
+
+            if let err = error {
+                self.errorHandler(error: err)
+                return
+            }
             
             let results : [String]
             do {
@@ -166,7 +201,7 @@ class VMwareApiClient {
                     "vim:PowerOnVM_TaskResponse/vim:returnval"
                     ])
             } catch let err as NSError {
-                //callback(error: err)
+                self.errorHandler(error: err)
                 return
             }
 
@@ -202,21 +237,23 @@ class VMwareApiClient {
                     "vim:CreateFilterResponse/vim:returnval"
                     ])
             } catch let err as NSError {
-                //callback(error: err)
+                self.errorHandler(error: err)
                 return
             }
-            //self.pollTask() { (progress, status) -> Void in
-            //    callback(progress: progress, status: status)
-            //}
         }
     }
     
     func pollForUpdates(callback: (progress: Int, status: String) -> Void) {
         self.doRequest("<WaitForUpdates xmlns=\"urn:internalvim25\"><_this type=\"PropertyCollector\">\(self.propertyCollectorName)</_this><version>\(self.lastUpdateVersion.htmlEncode())</version></WaitForUpdates>") { (data, response, error) -> Void in
 
-            if error != nil && error!.code == -1001 { //time out
-                self.pollForUpdates(callback)
-                return
+            if let err = error {
+                if err.code == -1001 { //time out
+                    self.pollForUpdates(callback)
+                    return
+                } else {
+                    self.errorHandler(error: err)
+                    return
+                }
             }
 
             do {
@@ -240,7 +277,7 @@ class VMwareApiClient {
                     }
                 }
             } catch let err as NSError {
-                //callback(error: err)
+                self.errorHandler(error: err)
                 return
             }
 
@@ -250,6 +287,11 @@ class VMwareApiClient {
 
     func powerOffVM(vmId: String) {
         self.doRequest("<PowerOffVM_Task xmlns=\"urn:internalvim25\"><_this type=\"VirtualMachine\">\(vmId.htmlEncode())</_this></PowerOffVM_Task>") { (data, response, error) -> Void in
+            
+            if let err = error {
+                self.errorHandler(error: err)
+                return
+            }
 
             let results : [String]
             do {
@@ -257,7 +299,7 @@ class VMwareApiClient {
                     "vim:PowerOffVM_TaskResponse/vim:returnval"
                     ])
             } catch let err as NSError {
-                //callback(error: err)
+                self.errorHandler(error: err)
                 return
             }
 
@@ -277,7 +319,9 @@ class VMwareApiClient {
         httpSession.dataTaskWithRequest(urlRequest) { (data, response, error) -> Void in
             //print(response)
             if let imageData = data {
-                callback(imageData: imageData)
+                dispatch_async(dispatch_get_main_queue()) {
+                    callback(imageData: imageData)
+                }
             }
         }.resume()
     }
@@ -289,11 +333,11 @@ class VMwareApiClient {
             guard objNode.count > 0 else {
                 throw NSError(domain: "myapp", code: VMError.ResponseParseError.rawValue, userInfo: nil)
             }
-            
+/*
             guard let taskId = objNode[0].stringValue else {
                 throw NSError(domain: "myapp", code: VMError.ResponseParseError.rawValue, userInfo: nil)
             }
-            
+*/
             let changeSets = try objSet.nodesForXPath("vim:changeSet")
             var progress = -1
             var status = ""
@@ -323,7 +367,7 @@ class VMwareApiClient {
             
             if status != "running" {
                 progress = 100
-                finishTask(taskId)
+                finishTask(filterId)
             }
             
             if progress >= 0 {
@@ -335,12 +379,22 @@ class VMwareApiClient {
     func finishTask(propertyFilterId: String) {
         self.doRequest("<DestroyPropertyFilter xmlns=\"urn:internalvim25\"><_this type=\"PropertyFilter\">\(propertyFilterId.htmlEncode())</_this></DestroyPropertyFilter>") { (data, response, error) -> Void in
             
+            if let err = error {
+                self.errorHandler(error: err)
+                return
+            }
+
             do {
                 try self.getXMLFields(data!, getFields: [
-                    "vim:DestroyPropertyFilterResponse/vim:returnval"
+                    "vim:DestroyPropertyFilterResponse"
                     ])
             } catch let err as NSError {
-                //callback(error: err)
+                if let detail = err.userInfo["detail"] as? String {
+                    if detail == "ManagedObjectNotFoundFault" {
+                        return
+                    }
+                }
+                self.errorHandler(error: err)
                 return
             }
         }
@@ -383,6 +437,11 @@ class VMwareApiClient {
         self.vmUpdateCallback = vmUpdateCallback
 
         self.doRequest("<CreateContainerView xmlns=\"urn:internalvim25\"><_this type=\"ViewManager\">ViewManager</_this><container type=\"Folder\">\(self.rootFolderName.htmlEncode())</container><type>VirtualMachine</type><recursive>true</recursive></CreateContainerView>") { (data, response, error) -> Void in
+            
+            if let err = error {
+                self.errorHandler(error: err)
+                return
+            }
 
             let results : [String]
             do {
@@ -390,7 +449,7 @@ class VMwareApiClient {
                     "vim:CreateContainerViewResponse/vim:returnval"
                     ])
             } catch let err as NSError {
-                //callback(error: err)
+                self.errorHandler(error: err)
                 return
             }
 
@@ -413,6 +472,12 @@ class VMwareApiClient {
                     "<options></options>" +
                 "</RetrievePropertiesEx>"
             ) { (data, response, error) -> Void in
+                
+                if let err = error {
+                    self.errorHandler(error: err)
+                    return
+                }
+
                 var xmlResponse = ""
 
                 do {
@@ -442,17 +507,23 @@ class VMwareApiClient {
                             "<partialUpdates>0</partialUpdates>" +
                         "</CreateFilter>"
                 } catch let err as NSError {
-                    //callback(error: err)
+                    self.errorHandler(error: err)
                     return
                 }
 
                 self.doRequest(xmlResponse) { (data, response, error) -> Void in
+                    
+                    if let err = error {
+                        self.errorHandler(error: err)
+                        return
+                    }
+
                     do {
                         try self.getXMLFields(data!, getFields: [
                             "vim:CreateFilterResponse/vim:returnval"
                             ])
                     } catch let err as NSError {
-                        //callback(error: err)
+                        self.errorHandler(error: err)
                         return
                     }
 
@@ -474,7 +545,11 @@ class VMwareApiClient {
             "</env:Envelope>").dataUsingEncoding(NSUTF8StringEncoding)
         
         httpSession.dataTaskWithRequest(urlRequest) { (data, response, error) -> Void in
-            callback(data: data, response: response, error: error)
+            if (!self.cancelled) {
+                dispatch_async(dispatch_get_main_queue()) {
+                    callback(data: data, response: response, error: error)
+                }
+            }
         }.resume()
     }
     
@@ -490,19 +565,21 @@ class VMwareApiClient {
         
         let fault = try soapBody[0].nodesForXPath("soapenv:Fault")
         guard fault.count == 0 else {
+            var dict = [NSObject: AnyObject]()
             let detailNode = try fault[0].nodesForXPath("detail")
             if detailNode.count > 0 && detailNode[0].children != nil && detailNode[0].children!.count > 0 {
                 if let name = detailNode[0].children![0].name {
                     if name == "InvalidLoginFault" {
                         throw NSError(domain: "myapp", code: VMError.InvalidLoginFault.rawValue, userInfo: nil)
+                    } else {
+                        dict["detail"] = name
                     }
                 }
             }
             
             let faultcodeNode = try fault[0].nodesForXPath("faultcode")
             let faultstringNode = try fault[0].nodesForXPath("faultstring")
-            
-            var dict = [NSObject: AnyObject]()
+
             if faultcodeNode.count > 0 {
                 dict["faultcode"] = faultcodeNode[0].stringValue
             }
@@ -530,5 +607,9 @@ class VMwareApiClient {
         }
         
         return result
+    }
+    
+    func cancel() {
+        cancelled = true
     }
 }
