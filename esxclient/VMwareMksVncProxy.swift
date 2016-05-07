@@ -44,11 +44,9 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
     }
 
     func setupVncProxyServerPort(callback: (port: UInt16) -> Void) {
-
         self.connectToAuthd()
-        
         self.negotiateMksSession()
-        
+
         let port = startVncProxyServer()
         callback(port: port)
     }
@@ -278,6 +276,7 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
                 var buffer = [UInt8](count: 8192, repeatedValue: 0)
                 var readSize : Int = 0
                 let r = SSLRead(self.sslCtx!, &buffer, buffer.count, &readSize)
+                //print ("vmw read: \(readSize): \(buffer[0]) \(buffer[1])")
                 if r == errSSLWouldBlock {
                     continue
                 }
@@ -285,8 +284,9 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
                 if readSize <= 0 {
                     print("server disconnected")
                     self.cleanup()
-                    continue
+                    return
                 }
+                
                 let written = self.clientOutputStream?.write(buffer, maxLength: readSize)
                 assert(written == readSize)
             }
@@ -295,11 +295,12 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
             while self.clientInputStream!.hasBytesAvailable {
                 var buffer = [UInt8](count: 8192, repeatedValue: 0)
                 let readSize = self.clientInputStream?.read(&buffer, maxLength: buffer.count)
+                //print ("client read: \(readSize)")
                 //assert(readSize > 0)
                 if readSize <= 0 {
                     print("client disconnected")
                     self.cleanup()
-                    continue
+                    return
                 }
 
                 var written : Int = 0
@@ -313,16 +314,20 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
     
     func cleanup() {
         SSLClose(self.sslCtx!)
+        self.sslCtx = nil
+
         self.vmwInputStream!.close()
+        self.vmwInputStream = nil
+
         self.vmwOutputStream!.close()
+        self.vmwOutputStream = nil
+
         self.clientInputStream!.close()
+        self.clientInputStream = nil
+
         self.clientOutputStream!.close()
-/*
-        if self.vncServerSocket != nil {
-            CFSocketInvalidate(self.vncServerSocket)
-            self.vncServerSocket = nil
-        }
-*/
+        self.clientOutputStream = nil
+
         if self.vncClientSocketFd > 0 {
             close(self.vncClientSocketFd)
             self.vncClientSocketFd = -1
@@ -351,6 +356,11 @@ func acceptVncClientConnection(s: CFSocket!, callbackType: CFSocketCallBackType,
     
     inputStream.open()
     outputStream.open()
+    
+    if delegate.vmwInputStream == nil {
+        delegate.connectToAuthd()
+        delegate.negotiateMksSession()
+    }
     
     delegate.handleVncProxyClient(inputStream, outputStream: outputStream)
 }
