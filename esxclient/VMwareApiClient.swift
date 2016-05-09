@@ -130,7 +130,13 @@ class VMwareApiClient {
     
     
     func loginMsg(callback: () -> Void) {
-        self.doRequest("<Login xmlns=\"urn:internalvim25\"><_this type=\"SessionManager\">\(self.sessionManagerName.htmlEncode())</_this><userName>\(username.htmlEncode())</userName><password>\(password.htmlEncode())</password></Login>") { (data, response, error) -> Void in
+        self.doRequest(
+            "<Login xmlns=\"urn:internalvim25\">" +
+                "<_this type=\"SessionManager\">\(self.sessionManagerName.htmlEncode())</_this>" +
+                "<userName>\(username.htmlEncode())</userName>" +
+                "<password>\(password.htmlEncode())</password>" +
+            "</Login>"
+        ) { (data, response, error) -> Void in
 
             if let err = error {
                 self.errorHandler(error: err)
@@ -154,8 +160,12 @@ class VMwareApiClient {
     }
     
     func acquireMksTicket(vmId: String, callback: (ticket: String, cfgFile: String, port: UInt16, sslThumbprint: String) -> Void) {
-        self.doRequest("<AcquireTicket xmlns=\"urn:internalvim25\"><_this type=\"VirtualMachine\">\(vmId.htmlEncode())</_this><ticketType>mks</ticketType></AcquireTicket>") { (data, response, error) -> Void in
-
+        self.doRequest(
+            "<AcquireTicket xmlns=\"urn:internalvim25\">" +
+                "<_this type=\"VirtualMachine\">\(vmId.htmlEncode())</_this>" +
+                "<ticketType>mks</ticketType>" +
+            "</AcquireTicket>"
+        ) { (data, response, error) -> Void in
             if let err = error {
                 self.errorHandler(error: err)
                 return
@@ -188,8 +198,11 @@ class VMwareApiClient {
     }
 
     func powerOnVM(vmId: String) {
-        self.doRequest("<PowerOnVM_Task xmlns=\"urn:internalvim25\"><_this type=\"VirtualMachine\">\(vmId.htmlEncode())</_this></PowerOnVM_Task>") { (data, response, error) -> Void in
-
+        self.doRequest(
+            "<PowerOnVM_Task xmlns=\"urn:internalvim25\">" +
+                "<_this type=\"VirtualMachine\">\(vmId.htmlEncode())</_this>" +
+            "</PowerOnVM_Task>"
+        ) { (data, response, error) -> Void in
             if let err = error {
                 self.errorHandler(error: err)
                 return
@@ -244,8 +257,12 @@ class VMwareApiClient {
     }
     
     func pollForUpdates(callback: (progress: Int, status: String) -> Void) {
-        self.doRequest("<WaitForUpdates xmlns=\"urn:internalvim25\"><_this type=\"PropertyCollector\">\(self.propertyCollectorName)</_this><version>\(self.lastUpdateVersion.htmlEncode())</version></WaitForUpdates>") { (data, response, error) -> Void in
-
+        self.doRequest(
+            "<WaitForUpdates xmlns=\"urn:internalvim25\">" +
+                "<_this type=\"PropertyCollector\">\(self.propertyCollectorName)</_this>" +
+                "<version>\(self.lastUpdateVersion.htmlEncode())</version>" +
+            "</WaitForUpdates>"
+        ) { (data, response, error) -> Void in
             if let err = error {
                 if err.code == -1001 { //time out
                     self.pollForUpdates(callback)
@@ -286,8 +303,11 @@ class VMwareApiClient {
     }
 
     func powerOffVM(vmId: String) {
-        self.doRequest("<PowerOffVM_Task xmlns=\"urn:internalvim25\"><_this type=\"VirtualMachine\">\(vmId.htmlEncode())</_this></PowerOffVM_Task>") { (data, response, error) -> Void in
-            
+        self.doRequest(
+            "<PowerOffVM_Task xmlns=\"urn:internalvim25\">" +
+                "<_this type=\"VirtualMachine\">\(vmId.htmlEncode())</_this>" +
+            "</PowerOffVM_Task>"
+        ) { (data, response, error) -> Void in
             if let err = error {
                 self.errorHandler(error: err)
                 return
@@ -308,6 +328,32 @@ class VMwareApiClient {
         }
     }
 
+    func resetVM(vmId: String) {
+        self.doRequest(
+            "<ResetVM_Task xmlns=\"urn:internalvim25\">" +
+                "<_this type=\"VirtualMachine\">\(vmId.htmlEncode())</_this>" +
+            "</ResetVM_Task>"
+        ) { (data, response, error) -> Void in
+            if let err = error {
+                self.errorHandler(error: err)
+                return
+            }
+            
+            let results : [String]
+            do {
+                results = try self.getXMLFields(data!, getFields: [
+                    "vim:ResetVM_TaskResponse/vim:returnval"
+                    ])
+            } catch let err as NSError {
+                self.errorHandler(error: err)
+                return
+            }
+            
+            let task = results[0]
+            self.waitForTask(task)
+        }
+    }
+    
     func getVMScreenshot(vmId: String, callback: (imageData: NSData) -> Void) {
         let urlRequest = NSMutableURLRequest(URL: NSURL(string: "https://\(self.host)/screen?id=\(vmId.urlEncode())")!)
         urlRequest.HTTPMethod = "GET"
@@ -377,8 +423,11 @@ class VMwareApiClient {
     }
 
     func finishTask(propertyFilterId: String) {
-        self.doRequest("<DestroyPropertyFilter xmlns=\"urn:internalvim25\"><_this type=\"PropertyFilter\">\(propertyFilterId.htmlEncode())</_this></DestroyPropertyFilter>") { (data, response, error) -> Void in
-            
+        self.doRequest(
+            "<DestroyPropertyFilter xmlns=\"urn:internalvim25\">" +
+                "<_this type=\"PropertyFilter\">\(propertyFilterId.htmlEncode())</_this>" +
+            "</DestroyPropertyFilter>"
+        ) { (data, response, error) -> Void in
             if let err = error {
                 self.errorHandler(error: err)
                 return
@@ -436,8 +485,14 @@ class VMwareApiClient {
     func getVMs(vmUpdateCallback: (virtualMachines: [String: [String: String]]) -> Void) {
         self.vmUpdateCallback = vmUpdateCallback
 
-        self.doRequest("<CreateContainerView xmlns=\"urn:internalvim25\"><_this type=\"ViewManager\">ViewManager</_this><container type=\"Folder\">\(self.rootFolderName.htmlEncode())</container><type>VirtualMachine</type><recursive>true</recursive></CreateContainerView>") { (data, response, error) -> Void in
-            
+        self.doRequest(
+            "<CreateContainerView xmlns=\"urn:internalvim25\">" +
+                "<_this type=\"ViewManager\">ViewManager</_this>" +
+                "<container type=\"Folder\">\(self.rootFolderName.htmlEncode())</container>" +
+                "<type>VirtualMachine</type>" +
+                "<recursive>true</recursive>" +
+            "</CreateContainerView>"
+        ) { (data, response, error) -> Void in
             if let err = error {
                 self.errorHandler(error: err)
                 return

@@ -19,6 +19,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
     @IBOutlet weak var vmScreenshotView: NSImageView!
     @IBOutlet weak var viewConsoleButton: NSButton!
     @IBOutlet weak var powerOnButton: NSButton!
+    @IBOutlet weak var resetButton: NSButton!
     @IBOutlet weak var powerOffButton: NSButton!
     @IBOutlet weak var progressCircle: NSProgressIndicator!
 
@@ -135,6 +136,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
                     self.vmwareMksVncProxy!.setupVncProxyServerPort() { (port) -> Void in
                         dispatch_async(dispatch_get_main_queue()) {
                             NSWorkspace.sharedWorkspace().openURL(NSURL(string: "vnc://abc:123@localhost:\(port)")!)
+                            //print("connect to port \(port)")
                         }
                     }
                 }
@@ -155,6 +157,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
                 viewConsoleButton!.enabled = (vm["runtime.powerState"]! == "poweredOn")
                 powerOnButton!.enabled = !viewConsoleButton!.enabled
                 powerOffButton!.enabled = viewConsoleButton!.enabled
+                resetButton!.enabled = powerOffButton!.enabled
                 self.vmwareApi?.getVMScreenshot(id!) { (screenshotData) -> Void in
                     self.vmScreenshotView.image = NSImage(data: screenshotData)
                 }
@@ -163,6 +166,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
             viewConsoleButton!.enabled = false
             powerOnButton!.enabled = false
             powerOffButton!.enabled = false
+            resetButton!.enabled = false
         }
     }
 
@@ -190,6 +194,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
                 vmwareApi?.powerOffVM(id!)
             }
         }
+    }
+
+    @IBAction func resetButtonClick(sender: AnyObject) {
+        let row = self.sidebarList.selectedRow
+        if row > 0 {
+            let vm = vmList[row - 1]
+            let id = vm["id"]
+            if id != nil {
+                self.progressCircle?.doubleValue = 1.0
+                self.progressCircle.hidden = false
+                vmwareApi?.resetVM(id!)
+            }
+        }
+    }
+    
+    @IBAction func loginCancelButtonClick(sender: AnyObject) {
+        NSApp!.terminate(sender)
     }
 
     func outlineView(outlineView: NSOutlineView, child index: Int, ofItem item: AnyObject?) -> AnyObject {
@@ -228,20 +249,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
                      viewForTableColumn tableColumn: NSTableColumn?,
                                         item: AnyObject) -> NSView? {
         var v : NSTableCellView
-        /*
-        if n == 0 {
-            v = outlineView.makeViewWithIdentifier("HeaderCell", owner: self) as! NSTableCellView
-            if let tf = v.textField {
-                tf.stringValue = "Virtual Machines" as! String
-            }
-        } else {
-            v = outlineView.makeViewWithIdentifier("DataCell", owner: self) as! NSTableCellView
-            if let tf = v.textField {
-                tf.stringValue = item as! String
-            }
-        }
-        n = n + 1
-        */
         
         let info = item as! [String: String]
         if (info["header"] != nil) {
@@ -281,14 +288,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
     }
 
     func applicationDidFinishLaunching(aNotification: NSNotification) {
-        self.hostField.stringValue  = "172.16.21.33"
-        self.usernameField.stringValue = "root"
-        self.passwordField.stringValue = "passworD1"
+        self.loginWindow!.level = Int(CGWindowLevelForKey(.MaximumWindowLevelKey))
+
+        //self.hostField.stringValue  = "172.16.21.33"
+        //self.usernameField.stringValue = "root"
+        //self.passwordField.stringValue = "passworD1"
         
         //let host = "10.0.1.26"
-        //self.hostField.stringValue = "10.0.1.39"
-        //self.usernameField.stringValue = "root"
-        //self.passwordField.stringValue = "hello123"
+        self.hostField.stringValue = "10.0.1.39"
+        self.usernameField.stringValue = "root"
+        self.passwordField.stringValue = "hello123"
         
         //let host = "10.0.1.29"
         //let username = "VSPHERE.LOCAL\\scottjg"
@@ -301,7 +310,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
         // Insert code here to tear down your application
     }
     
-    
+    /*
     func shakeLoginWindow() {
         let numberOfShakes:Int = 8
         let durationOfShake:Float = 0.5
@@ -324,4 +333,5 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
         self.loginWindow.animations = ["frameOrigin":shakeAnimation]
         self.loginWindow.animator().setFrameOrigin(self.loginWindow.frame.origin)
     }
+    */
 }

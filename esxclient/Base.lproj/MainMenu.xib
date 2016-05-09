@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<document type="com.apple.InterfaceBuilder3.Cocoa.XIB" version="3.0" toolsVersion="10116" systemVersion="15E65" targetRuntime="MacOSX.Cocoa" propertyAccessControl="none" useAutolayout="YES" customObjectInstantitationMethod="direct">
+<document type="com.apple.InterfaceBuilder3.Cocoa.XIB" version="3.0" toolsVersion="10117" systemVersion="15E65" targetRuntime="MacOSX.Cocoa" propertyAccessControl="none" useAutolayout="YES" customObjectInstantitationMethod="direct">
     <dependencies>
         <deployment identifier="macosx"/>
-        <plugIn identifier="com.apple.InterfaceBuilder.CocoaPlugin" version="10116"/>
+        <plugIn identifier="com.apple.InterfaceBuilder.CocoaPlugin" version="10117"/>
     </dependencies>
     <objects>
         <customObject id="-2" userLabel="File's Owner" customClass="NSApplication">
@@ -23,6 +23,7 @@
                 <outlet property="powerOffButton" destination="sto-2n-pJ6" id="8Uj-Fh-6zw"/>
                 <outlet property="powerOnButton" destination="01T-uP-6pw" id="1Cg-jf-hDZ"/>
                 <outlet property="progressCircle" destination="foh-JS-zpy" id="mKS-bg-T8c"/>
+                <outlet property="resetButton" destination="1xD-vf-JsY" id="2cr-5n-5NK"/>
                 <outlet property="sidebarList" destination="vzj-cc-VAb" id="hcW-xD-z8N"/>
                 <outlet property="usernameField" destination="Kh8-r6-Yzz" id="IhW-lV-rai"/>
                 <outlet property="viewConsoleButton" destination="4PI-me-1CZ" id="Ien-Th-boJ"/>
@@ -742,7 +743,7 @@
                         </textFieldCell>
                     </textField>
                     <button verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="01T-uP-6pw">
-                        <rect key="frame" x="178" y="13" width="97" height="32"/>
+                        <rect key="frame" x="151" y="13" width="92" height="32"/>
                         <buttonCell key="cell" type="push" title="Power on" bezelStyle="rounded" alignment="center" enabled="NO" borderStyle="border" imageScaling="proportionallyDown" inset="2" id="Elc-H5-5vU">
                             <behavior key="behavior" pushIn="YES" lightByBackground="YES" lightByGray="YES"/>
                             <font key="font" metaFont="system"/>
@@ -751,18 +752,18 @@
                             <action selector="powerOnButtonClick:" target="Voe-Tx-rLC" id="LPM-Cz-9L5"/>
                         </connections>
                     </button>
-                    <button verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="sto-2n-pJ6">
-                        <rect key="frame" x="275" y="13" width="98" height="32"/>
-                        <buttonCell key="cell" type="push" title="Power off" bezelStyle="rounded" alignment="center" enabled="NO" borderStyle="border" imageScaling="proportionallyDown" inset="2" id="Shp-XH-GMX">
+                    <button verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="1xD-vf-JsY">
+                        <rect key="frame" x="243" y="13" width="75" height="32"/>
+                        <buttonCell key="cell" type="push" title="Reset" bezelStyle="rounded" alignment="center" enabled="NO" borderStyle="border" imageScaling="proportionallyDown" inset="2" id="VTZ-ra-ITn">
                             <behavior key="behavior" pushIn="YES" lightByBackground="YES" lightByGray="YES"/>
                             <font key="font" metaFont="system"/>
-                            <connections>
-                                <action selector="powerOffButtonClick:" target="Voe-Tx-rLC" id="arn-Wz-nms"/>
-                            </connections>
                         </buttonCell>
+                        <connections>
+                            <action selector="resetButtonClick:" target="Voe-Tx-rLC" id="S1i-0Z-iXK"/>
+                        </connections>
                     </button>
                     <button verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="4PI-me-1CZ">
-                        <rect key="frame" x="373" y="13" width="122" height="32"/>
+                        <rect key="frame" x="410" y="13" width="112" height="32"/>
                         <buttonCell key="cell" type="push" title="View Console" bezelStyle="rounded" alignment="center" enabled="NO" borderStyle="border" imageScaling="proportionallyDown" inset="2" id="bET-UL-giB">
                             <behavior key="behavior" pushIn="YES" lightByBackground="YES" lightByGray="YES"/>
                             <font key="font" metaFont="system"/>
@@ -914,6 +915,16 @@
                             <autoresizingMask key="autoresizingMask"/>
                         </scroller>
                     </scrollView>
+                    <button verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="sto-2n-pJ6">
+                        <rect key="frame" x="318" y="13" width="92" height="32"/>
+                        <buttonCell key="cell" type="push" title="Power off" bezelStyle="rounded" alignment="center" enabled="NO" borderStyle="border" imageScaling="proportionallyDown" inset="2" id="Shp-XH-GMX">
+                            <behavior key="behavior" pushIn="YES" lightByBackground="YES" lightByGray="YES"/>
+                            <font key="font" metaFont="system"/>
+                            <connections>
+                                <action selector="powerOffButtonClick:" target="Voe-Tx-rLC" id="arn-Wz-nms"/>
+                            </connections>
+                        </buttonCell>
+                    </button>
                 </subviews>
                 <constraints>
                     <constraint firstItem="tZ8-r8-97D" firstAttribute="leading" secondItem="EiT-Mj-1SZ" secondAttribute="leading" constant="-1" id="5fO-m9-L2s"/>
@@ -925,8 +936,7 @@
         </window>
         <window title="Login" allowsToolTipsWhenApplicationIsInactive="NO" autorecalculatesKeyViewLoop="NO" restorable="NO" oneShot="NO" releasedWhenClosed="NO" showsToolbarButton="NO" frameAutosaveName="" animationBehavior="default" id="cKr-ga-bc6">
             <windowStyleMask key="styleMask" titled="YES" closable="YES" miniaturizable="YES"/>
-            <windowPositionMask key="initialPositionMask" leftStrut="YES" rightStrut="YES" topStrut="YES" bottomStrut="YES"/>
-            <rect key="contentRect" x="512" y="433" width="361" height="161"/>
+            <rect key="contentRect" x="476" y="433" width="361" height="161"/>
             <rect key="screenRect" x="0.0" y="0.0" width="1280" height="777"/>
             <view key="contentView" id="i1a-Yu-33J">
                 <rect key="frame" x="0.0" y="0.0" width="361" height="161"/>
@@ -948,6 +958,9 @@
                         <buttonCell key="cell" type="push" title="Connect" bezelStyle="rounded" alignment="center" enabled="NO" borderStyle="border" imageScaling="proportionallyDown" inset="2" id="nM7-Aj-RFg">
                             <behavior key="behavior" pushIn="YES" lightByBackground="YES" lightByGray="YES"/>
                             <font key="font" metaFont="system"/>
+                            <string key="keyEquivalent" base64-UTF8="YES">
+DQ
+</string>
                             <connections>
                                 <action selector="connectLoginButtonClicked:" target="Voe-Tx-rLC" id="Sdg-OU-lL7"/>
                             </connections>
@@ -962,6 +975,9 @@
 Gw
 </string>
                         </buttonCell>
+                        <connections>
+                            <action selector="loginCancelButtonClick:" target="Voe-Tx-rLC" id="W46-Qm-c1S"/>
+                        </connections>
                     </button>
                     <progressIndicator wantsLayer="YES" horizontalHuggingPriority="750" verticalHuggingPriority="750" fixedFrame="YES" maxValue="100" displayedWhenStopped="NO" bezeled="NO" indeterminate="YES" style="spinning" translatesAutoresizingMaskIntoConstraints="NO" id="wzS-XH-Bc1">
                         <rect key="frame" x="42" y="82" width="32" height="32"/>
