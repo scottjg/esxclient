@@ -1,4 +1,5 @@
 node {
-  stage 'Build'
-  sh 'xcodebuild'
+  stage 'Build' {
+    sh 'xcodebuild'
+  }
 }
