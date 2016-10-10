@@ -8,22 +8,43 @@
 import CoreFoundation
 import Foundation
 import Cocoa
+fileprivate func < <T : Comparable>(lhs: T?, rhs: T?) -> Bool {
+  switch (lhs, rhs) {
+  case let (l?, r?):
+    return l < r
+  case (nil, _?):
+    return true
+  default:
+    return false
+  }
+}
 
-class VMwareMksVncProxy : NSObject, NSStreamDelegate {
+fileprivate func <= <T : Comparable>(lhs: T?, rhs: T?) -> Bool {
+  switch (lhs, rhs) {
+  case let (l?, r?):
+    return l <= r
+  default:
+    return !(rhs < lhs)
+  }
+}
+
+
+class VMwareMksVncProxy : NSObject, StreamDelegate {
     var vmwareHost, sessionTicket, vmCfgFile, vmwareSslThumbprint : String
     var vmwarePort : UInt16
     
-    var vmwInputStream: NSInputStream?
-    var vmwOutputStream: NSOutputStream?
-    var clientInputStream: NSInputStream?
-    var clientOutputStream: NSOutputStream?
+    var vmwInputStream: InputStream?
+    var vmwOutputStream: OutputStream?
+    var vmwSocket: SyncSocket?
+    var clientInputStream: InputStream?
+    var clientOutputStream: OutputStream?
     var sslCtx: SSLContext?
     
     var vncServerSocket : CFSocket?
     var vncServerSocketEventSource: CFRunLoopSource? = nil
     var vncClientSocketFd: CFSocketNativeHandle = -1
     
-    var selfPtr: UnsafeMutablePointer<VMwareMksVncProxy> = nil
+    var selfPtr: UnsafeMutablePointer<VMwareMksVncProxy>? = nil
     
     init(host: String, ticket: String, cfgFile: String, port: UInt16, sslThumbprint: String) {
         self.vmwareHost = host
@@ -34,24 +55,24 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
 
         super.init()
 
-        self.selfPtr = UnsafeMutablePointer<VMwareMksVncProxy>.alloc(1)
-        selfPtr.initialize(self)
+        self.selfPtr = UnsafeMutablePointer<VMwareMksVncProxy>.allocate(capacity: 1)
+        selfPtr?.initialize(to: self)
     }
     
     deinit {
-        selfPtr.dealloc(1)
+        selfPtr?.deallocate(capacity: 1)
     }
 
-    func setupVncProxyServerPort(callback: (port: UInt16) -> Void) {
+    func setupVncProxyServerPort(_ callback: (_ port: UInt16) -> Void) {
         // setup a random port to listen for a vnc client
         let port = self.startVncProxyServer()
 
         // tell the application that the port is ready
         // (and to presumably start the vnc client)
-        callback(port: port)
+        callback(port)
     }
 
-    func handleVncProxyClient(inputStream : NSInputStream, outputStream : NSOutputStream) {
+    func handleVncProxyClient(_ inputStream : InputStream, outputStream : OutputStream) {
         // this runs when the vnc client connects to our proxy port.
         // the vmware mks protocol is similar to vnc, but it starts
         // slightly different. so we pretend to be the vnc server at
@@ -59,317 +80,204 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
         // to be a vmware mks client to the vmware server. once both
         // the connections are properly initiated on both sides, we can
         // simply proxy the data raw between connections.
-        var buffer = [UInt8](count: 8192, repeatedValue: 0)
 
         //first, we'll want the line of text identifying the protocol version from the client
-        self.clientConnectionState = ConnectionState.WaitingForLine
+        //self.clientConnectionState = ConnectionState.waitingForLine
 
         // enable async callbacks this new incoming socket
-        self.clientInputStream = inputStream
-        self.clientInputStream?.delegate = self
-        inputStream.scheduleInRunLoop(.mainRunLoop(), forMode: NSDefaultRunLoopMode)
-        self.clientOutputStream = outputStream
-
+        //self.clientInputStream = inputStream
+        //self.clientInputStream?.delegate = self
+        //inputStream.schedule(in: .main, forMode: RunLoopMode.defaultRunLoopMode)
+        //self.clientOutputStream = outputStream
+        let clientSocket = SyncSocket(inputStream: inputStream, outputStream: outputStream)
+        
         // tell the client we support the "old" version of the vnc protocol
         // it's what the mac screen sharing client wants.
         let msg = [UInt8]("RFB 003.003\n".utf8)
-        var size = outputStream.write(msg, maxLength: msg.count)
-        if (size <= 0) {
+        try! clientSocket.write(msg)
+
+        let line = try! clientSocket.readLine(16)
+        if line != "RFB 003.003" {
             //XXX err
             return
         }
+
+        // send security type 0x00000002 (regular vnc password).
+        // it's the only security type that the osx screen sharing
+        // client can tolerate. we ignore the received password anyway.
+        var cmd = [UInt8](repeating: 0, count: 4)
+        cmd[0] = 0x00
+        cmd[1] = 0x00
+        cmd[2] = 0x00
+        cmd[3] = 0x02
+        try! clientSocket.write(cmd)
         
-        waitForLineFromClient() { (line: String) -> Void in
-            if line != "RFB 003.003\n" {
-                //XXX err
-                return
-            }
+        // send a shared secret to encrypt the password with
+        // (again we don't care, we don't really validate the
+        // password)
+        var secret = [UInt8](repeating: 0, count: 16)
+        secret[0 ] = 0x01
+        secret[1 ] = 0x02
+        secret[2 ] = 0x03
+        secret[3 ] = 0x04
+        secret[4 ] = 0x05
+        secret[5 ] = 0x06
+        secret[6 ] = 0x07
+        secret[7 ] = 0x08
+        secret[8 ] = 0x09
+        secret[9 ] = 0x0A
+        secret[10] = 0x0B
+        secret[11] = 0x0C
+        secret[12] = 0x0D
+        secret[13] = 0x0E
+        secret[14] = 0x0F
+        secret[15] = 0x10
+        try! clientSocket.write(secret)
 
-            // the next thing we want is going to be variable length data
-            self.clientConnectionState = ConnectionState.WaitingForData
+        // client sends us the password (that we ignore)
+        _ = try! clientSocket.read(16)
+        
+        // tell client that the password is ok
+        cmd[0] = 0x00
+        cmd[1] = 0x00
+        cmd[2] = 0x00
+        cmd[3] = 0x00
+        try! clientSocket.write(cmd)
+        
+        _ = try! clientSocket.read(1)
+        // client tells us if it's ok to share the desktop (we ignore)
 
-            // send security type 0x00000002 (regular vnc password).
-            // it's the only security type that the osx screen sharing
-            // client can tolerate. we ignore the received password anyway.
-            buffer[0] = 0x00
-            buffer[1] = 0x00
-            buffer[2] = 0x00
-            buffer[3] = 0x02
-            size = outputStream.write(buffer, maxLength: 4)
-            if (size <= 0) {
-                //XXX err
-                return
-            }
-            
-            // send a shared secret to encrypt the password with
-            // (again we don't care, we don't really validate the
-            // password)
-            size = outputStream.write(buffer, maxLength: 16)
-            if (size <= 0) {
-                //XXX err
-                return
-            }
-
-            self.waitForDataFromClient(16) { (data) in
-                // client sends us the password (that we ignore)
-
-                // tell client that the password is ok
-                buffer[0] = 0x00
-                buffer[1] = 0x00
-                buffer[2] = 0x00
-                buffer[3] = 0x00
-                size = outputStream.write(buffer, maxLength: 4)
-                if (size <= 0) {
-                    //XXX err
-                    return
-                }
-                
-                self.waitForDataFromClient(1) { (data) in
-                    // client tells us if it's ok to share the desktop (we ignore)
-
-                    // ok, now we have to proxy the actual vnc stuff from the server
-                    print("client is ready for video, proxying..")
-                    self.clientConnectionState = ConnectionState.ProxyingVnc
-                    self.negotiateMksSession() {
-                        print("the vnc session has begun")
-                    }
-                }
-            }
+        // ok, now we have to proxy the actual vnc stuff from the server
+        print("client is ready for video, proxying..")
+        self.clientConnectionState = ConnectionState.proxyingVnc
+        self.negotiateMksSession() {
+            print("the vnc session has begun")
+            let proxy = SyncSocketProxy(socket1: self.vmwSocket!, socket2: clientSocket)
+            proxy.proxyUntilHangup()
         }
     }
 
     
-    func negotiateMksSession(callback: () -> Void) {
-        // this was tricky to write. there is a fairly invovled
-        // synchronous conversation that needs to happen with the
-        // vmware authd server, yet swift/cocoa seem to encourage
-        // an async pattern. i debated just doing a synchronous
-        // conversation in a thread or a seperate gcd task, but ended
-        // up doing it this way.
-        //
-        // the `waitFor...()` functions hide the async event handling
-        // underneath and call the following lambda/blocks at the
-        // appropriate times, as sort of a poor man's promise/future.
-        //
-        // writes are still blocking, but since the amount of data
-        // being sent is so small, it ends up being buffered by the
-        // underlying socket anyway, so it probably doesn't matter.
-        //
-        // i've annotated the conversation with `> ...` (client to server)
-        // and `< ...` (server to client) to illustrate the conversation
-
-        var readStream: Unmanaged<CFReadStreamRef>?
-        var writeStream: Unmanaged<CFWriteStreamRef>?
-        CFStreamCreatePairWithSocketToHost(nil, self.vmwareHost, UInt32(self.vmwarePort), &readStream, &writeStream);
-        
-        self.vmwInputStream = readStream!.takeRetainedValue()
-        self.vmwInputStream?.delegate = self
-        self.vmwInputStream?.scheduleInRunLoop(.mainRunLoop(), forMode: NSDefaultRunLoopMode)
-        
-        self.vmwOutputStream = writeStream!.takeRetainedValue()
-        self.vmwOutputStream?.delegate = self
-        //self.vmwOutputStream?.scheduleInRunLoop(.mainRunLoop(), forMode: NSDefaultRunLoopMode)
-        
-        //next, we want a full line of text from the server
-        self.serverConnectionState = ConnectionState.WaitingForLine
-
-        self.vmwInputStream?.open()
-        self.vmwOutputStream?.open()
-        
-        self.waitForLineFromServer() { (line: String) -> Void in
+    func negotiateMksSession(_ callback: @escaping () -> Void) {
+        let vmwSocket = SyncSocket(host: self.vmwareHost, port: self.vmwarePort)
+        self.vmwSocket = vmwSocket
+        do {
+            try vmwSocket.connect()
+            
+            var line = try vmwSocket.readLine(nil)
             /*
              < 220 VMware Authentication Daemon Version 1.10: SSL Required, ServerDaemonProtocol:SOAP, MKSDisplayProtocol:VNC , VMXARGS supported, NFCSSL supported
              */
-
+            
             if !line.hasPrefix("220 ") {
                 //XXX err
                 return
             }
 
-            self.sslCtx = SSLCreateContext(kCFAllocatorDefault, SSLProtocolSide.ClientSide, SSLConnectionType.StreamType)
-            guard let sslCtx = self.sslCtx else {
-                fatalError("failed to create ssl ctx")
-            }
-
-            SSLSetSessionOption(sslCtx, SSLSessionOption.BreakOnServerAuth, true)
-            SSLSetIOFuncs(sslCtx, sslReadCallback, sslWriteCallback)
-            SSLSetConnection(sslCtx, self.selfPtr)
+            try vmwSocket.startSSL()
             
-            //next we'll want a callback when any data is ready (to attempt ssl handshake)
-            self.serverConnectionState = ConnectionState.WaitingForData
-            self.waitForDataFromServer() { () -> Void in
-                var r = SSLHandshake(sslCtx)
-                if r == -9841 { //XXX we're supposed to verify the SSL cert here
-                   r = SSLHandshake(sslCtx)
-                }
-                
-                if r == -9803 {
-                    return // would block, wait to try again
-                } else if r != 0 {
-                    // XXX err
-                    return
-                }
+            try vmwSocket.write("USER \(self.sessionTicket)\r\n")
 
-                //next, we'll want a line of text from the server
-                self.serverConnectionState = ConnectionState.WaitingForLine
-                
-                /*
-                 > USER 52cf8c64-9343-7cb7-d151-1bfc481bb7d5
-                 */
-                var written : Int = 0
-                let loginMessage = "USER \(self.sessionTicket)\r\n".dataUsingEncoding(NSUTF8StringEncoding)
-
-                r = SSLWrite(sslCtx, loginMessage!.bytes, loginMessage!.length, &written)
-                if r != 0 {
-                    // XXX err
-                    return
-                }
-
-                self.waitForLineFromServer() { (line: String) -> Void in
-                    /*
-                     < 331 Password required for 52cf8c64-9343-7cb7-d151-1bfc481bb7d5.
-                     */
-                    if !line.hasPrefix("331 ") {
-                        //XXX err
-                        return
-                    }
-                    /*
-                     > PASS 52cf8c64-9343-7cb7-d151-1bfc481bb7d5
-                     */
-                    
-                    let passMessage = "PASS \(self.sessionTicket)\r\n".dataUsingEncoding(NSUTF8StringEncoding)
-                    r = SSLWrite(sslCtx, passMessage!.bytes, passMessage!.length, &written)
-                    if r != 0 {
-                        // XXX err
-                        return
-                    }
-
-                    self.waitForLineFromServer() { (line: String) -> Void in
-                        /*
-                         < 230 User 52cf8c64-9343-7cb7-d151-1bfc481bb7d5 logged in.
-                         */
-                        if !line.hasPrefix("230 ") {
-                            //XXX err
-                            return
-                        }
-                    
-                        /*
-                         > THUMBPRINT <b64 encode 12 random bytes>
-                         */
-                        let randomData = NSMutableData(length: 12)!
-                        let err = SecRandomCopyBytes(kSecRandomDefault, 12, UnsafeMutablePointer<UInt8>(randomData.mutableBytes));
-                        if (err != 0) {
-                            fatalError("failed to generate random bytes")
-                        }
-                        let randomDataStr = randomData.base64EncodedStringWithOptions(NSDataBase64EncodingOptions.Encoding76CharacterLineLength)
-                        
-                        let thumbprintMessage = "THUMBPRINT \(randomDataStr)\r\n".dataUsingEncoding(NSUTF8StringEncoding)
-                        r = SSLWrite(sslCtx, thumbprintMessage!.bytes, thumbprintMessage!.length, &written)
-                        if r != 0 {
-                            // XXX err
-                            return
-                        }
-                        
-                        self.waitForLineFromServer() { (line: String) -> Void in
-                            /*
-                             < 200 C5:50:62:9F:97:1D:AF:96:91:0B:2D:0E:2A:CA:2E:52:FB:60:87:73
-                             */
-                            if !line.hasPrefix("200 ") {
-                                //XXX err
-                                return
-                            }
-                    
-                            /*
-                             > CONNECT <vmfs path> mks\r\n
-                             */
-                            let connectMessage = "CONNECT \(self.vmCfgFile) mks\r\n".dataUsingEncoding(NSUTF8StringEncoding)
-                            r = SSLWrite(sslCtx, connectMessage!.bytes, connectMessage!.length, &written)
-                            if r != 0 {
-                                // XXX err
-                                return
-                            }
-
-                            self.waitForLineFromServer() { (line: String) -> Void in
-                                /*
-                                 < 200 Connect /vmfs/volumes/56d5c29a-ac1ca31f-fd75-089e01d8b64c/scottjg-enterprise2-test/scottjg-enterprise2-test.vmx
-                                 */
-                                if !line.hasPrefix("200 ") {
-                                    //XXX err
-                                    return
-                                }
-                                
-                                // this is weird but at this point in the protocol we have to redo the ssl handshake
-                                self.sslCtx = SSLCreateContext(kCFAllocatorDefault, SSLProtocolSide.ClientSide, SSLConnectionType.StreamType)
-                                guard let sslCtx = self.sslCtx else {
-                                    fatalError("failed to create second ssl ctx")
-                                }
-                                SSLSetSessionOption(sslCtx, SSLSessionOption.BreakOnServerAuth, true)
-                                SSLSetIOFuncs(sslCtx, sslReadCallback, sslWriteCallback)
-                                SSLSetConnection(sslCtx, self.selfPtr)
-
-                                //next we'll want a callback for any ready data, to continue the handshake
-                                self.serverConnectionState = ConnectionState.WaitingForData
-
-                                self.waitForDataFromServer() { () -> Void in
-                                    var r = SSLHandshake(sslCtx)
-                                    if r == -9841 { //XXX we're supposed to verify the SSL cert here
-                                        r = SSLHandshake(sslCtx)
-                                    }
-                                    
-                                    if r == -9803 {
-                                        return // would block, wait to try again
-                                    } else if r != 0 {
-                                        // XXX err
-                                        return
-                                    }
-
-                                    // after we send this last message, we start to prepare to proxy the vnc data
-                                    self.serverConnectionState = ConnectionState.ProxyingVnc
-                                    
-                                    let randomDataStrData = randomDataStr.dataUsingEncoding(NSUTF8StringEncoding)!
-                                    r = SSLWrite(self.sslCtx!, randomDataStrData.bytes, randomDataStrData.length, &written)
-                                    if r != 0 {
-                                        // XXX err
-                                        return
-                                    }
-                                    
-                                    callback()
-                                }
-                            }
-                        }
-                    }
-                }
+            /*
+             < 331 Password required for 52cf8c64-9343-7cb7-d151-1bfc481bb7d5.
+             */
+            line = try vmwSocket.readLine(nil)
+            if !line.hasPrefix("331 ") {
+                //XXX err
+                return
             }
+            /*
+             > PASS 52cf8c64-9343-7cb7-d151-1bfc481bb7d5
+             */
+            
+            try vmwSocket.write("PASS \(self.sessionTicket)\r\n")
+
+            
+            /*
+             < 230 User 52cf8c64-9343-7cb7-d151-1bfc481bb7d5 logged in.
+             */
+            line = try vmwSocket.readLine(nil)
+            if !line.hasPrefix("230 ") {
+                //XXX err
+                return
+            }
+            
+            /*
+             > THUMBPRINT <b64 encode 12 random bytes>
+             */
+            var randomData = Data(count: 12)
+            let err = randomData.withUnsafeMutableBytes {mutableBytes in
+                SecRandomCopyBytes(kSecRandomDefault, 12, mutableBytes)
+            }
+            if (err != 0) {
+                fatalError("failed to generate random bytes")
+            }
+            let randomDataStr = randomData.base64EncodedString(options: NSData.Base64EncodingOptions.lineLength76Characters)
+            
+            try vmwSocket.write("THUMBPRINT \(randomDataStr)\r\n")
+            
+            /*
+             < 200 C5:50:62:9F:97:1D:AF:96:91:0B:2D:0E:2A:CA:2E:52:FB:60:87:73
+             */
+            line = try vmwSocket.readLine(nil)
+            if !line.hasPrefix("200 ") {
+                //XXX err
+                return
+            }
+                
+            /*
+             > CONNECT <vmfs path> mks\r\n
+             */
+            try vmwSocket.write("CONNECT \(self.vmCfgFile) mks\r\n")
+            
+            /*
+             < 200 Connect /vmfs/volumes/56d5c29a-ac1ca31f-fd75-089e01d8b64c/scottjg-enterprise2-test/scottjg-enterprise2-test.vmx
+             */
+            line = try vmwSocket.readLine(nil)
+            if !line.hasPrefix("200 ") {
+                //XXX err
+                return
+            }
+                    
+
+            try vmwSocket.startSSL()
+
+            self.serverConnectionState = ConnectionState.proxyingVnc
+            try vmwSocket.write(randomDataStr)
+            callback()
+        } catch let err as NSError {
+            print(err)
         }
     }
     
 
     func startVncProxyServer() -> UInt16 {
         var socketContext = CFSocketContext()
-        socketContext.info = UnsafeMutablePointer<Void>(selfPtr)
+        socketContext.info = UnsafeMutableRawPointer(selfPtr)
         
-        self.vncServerSocket = CFSocketCreate(kCFAllocatorDefault, PF_INET, SOCK_STREAM, IPPROTO_TCP, CFSocketCallBackType.AcceptCallBack.rawValue, acceptVncClientConnection, &socketContext)
+        self.vncServerSocket = CFSocketCreate(kCFAllocatorDefault, PF_INET, SOCK_STREAM, IPPROTO_TCP, CFSocketCallBackType.acceptCallBack.rawValue, acceptVncClientConnection, &socketContext)
         
         let fd = CFSocketGetNative(self.vncServerSocket)
         var reuse = true
-        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(sizeof(Int32)))
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
         
         var addr = sockaddr_in(sin_len: 0, sin_family: 0, sin_port: 0, sin_addr: in_addr(s_addr: 0), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
-        addr.sin_len = UInt8(sizeofValue(addr))
+        addr.sin_len = UInt8(MemoryLayout.size(ofValue: addr))
         addr.sin_family = sa_family_t(AF_INET)
         addr.sin_addr.s_addr = UInt32(0x7F000001).bigEndian
         //addr.sin_port = UInt16(12345).bigEndian
-        
-        let ptr = withUnsafeMutablePointer(&addr){UnsafeMutablePointer<UInt8>($0)}
-        let data = CFDataCreate(nil, ptr, sizeof(sockaddr_in))
+
+        let data = NSData(bytes: &addr, length: MemoryLayout<sockaddr_in>.size) as CFData
         let r = CFSocketSetAddress(self.vncServerSocket, data)
-        if (r != CFSocketError.Success) {
+        if (r != CFSocketError.success) {
             fatalError("failed to set socket addr")
         }
         
-        var addrLen = socklen_t(sizeofValue(addr))
-        withUnsafeMutablePointers(&addr, &addrLen) { (sinPtr, addrPtr) -> Int32 in
-            getsockname(fd, UnsafeMutablePointer(sinPtr), UnsafeMutablePointer(addrPtr))
+        var addrLen = socklen_t(MemoryLayout.size(ofValue: addr))
+        _ = withUnsafeMutablePointer(to: &addr) { (ptr) -> Int32 in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(fd, $0, &addrLen)
+            }
         }
         let port = addr.sin_port.bigEndian
         print("assigned port \(port)")
@@ -383,7 +291,7 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
         CFRunLoopAddSource(
             CFRunLoopGetMain(),
             self.vncServerSocketEventSource,
-            kCFRunLoopDefaultMode);
+            CFRunLoopMode.defaultMode);
         
         print("waiting for incoming connection...")
         return port
@@ -398,59 +306,59 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
     // --- just leaving it right now since it's working.
     
     enum ConnectionState {
-        case Unknown
-        case WaitingForLine
-        case WaitingForData
-        case ProxyingVnc
+        case unknown
+        case waitingForLine
+        case waitingForData
+        case proxyingVnc
     }
     
-    var serverConnectionState: ConnectionState = ConnectionState.Unknown
+    var serverConnectionState: ConnectionState = ConnectionState.unknown
     var serverLineSoFar = NSMutableData()
     var serverHaveFullLine = false
-    var serverLineWaitingCallback: ((line: String) -> Void)? = nil
+    var serverLineWaitingCallback: ((_ line: String) -> Void)? = nil
 
-    func waitForLineFromServer(callback: (line: String) -> Void) {
-        assert(self.serverConnectionState == ConnectionState.WaitingForLine)
+    func waitForLineFromServer(_ callback: @escaping (_ line: String) -> Void) {
+        assert(self.serverConnectionState == ConnectionState.waitingForLine)
         self.serverLineWaitingCallback = callback
-        self.stream(self.vmwInputStream!, handleEvent: NSStreamEvent.HasBytesAvailable)
+        self.stream(self.vmwInputStream!, handle: Stream.Event.hasBytesAvailable)
     }
 
     var dataWaitingServerCallback: (() -> Void)? = nil
-    func waitForDataFromServer(callback: () -> Void) {
-        assert(self.serverConnectionState == ConnectionState.WaitingForData)
+    func waitForDataFromServer(_ callback: @escaping () -> Void) {
+        assert(self.serverConnectionState == ConnectionState.waitingForData)
         self.dataWaitingServerCallback = callback
-        self.stream(self.vmwInputStream!, handleEvent: NSStreamEvent.HasBytesAvailable)
+        self.stream(self.vmwInputStream!, handle: Stream.Event.hasBytesAvailable)
     }
 
     
-    var clientConnectionState: ConnectionState = ConnectionState.Unknown
+    var clientConnectionState: ConnectionState = ConnectionState.unknown
     var clientLineSoFar = NSMutableData()
     var clientHaveFullLine = false
-    var clientLineWaitingCallback: ((line: String) -> Void)? = nil
+    var clientLineWaitingCallback: ((_ line: String) -> Void)? = nil
     
-    func waitForLineFromClient(callback: (line: String) -> Void) {
-        assert(self.clientConnectionState == ConnectionState.WaitingForLine)
+    func waitForLineFromClient(_ callback: @escaping (_ line: String) -> Void) {
+        assert(self.clientConnectionState == ConnectionState.waitingForLine)
         self.clientLineWaitingCallback = callback
-        self.stream(self.clientInputStream!, handleEvent: NSStreamEvent.HasBytesAvailable)
+        self.stream(self.clientInputStream!, handle: Stream.Event.hasBytesAvailable)
     }
     
-    var clientDataWaitingCallback: ((data: NSData) -> Void)? = nil
+    var clientDataWaitingCallback: ((_ data: Data) -> Void)? = nil
     var clientDataWaitingSize = 0
-    func waitForDataFromClient(size: Int, callback: (data: NSData) -> Void) {
-        assert(self.clientConnectionState == ConnectionState.WaitingForData)
+    func waitForDataFromClient(_ size: Int, callback: @escaping (_ data: Data) -> Void) {
+        assert(self.clientConnectionState == ConnectionState.waitingForData)
         self.clientDataWaitingCallback = callback
         self.clientDataWaitingSize = size
-        self.stream(self.clientInputStream!, handleEvent: NSStreamEvent.HasBytesAvailable)
+        self.stream(self.clientInputStream!, handle: Stream.Event.hasBytesAvailable)
     }
     
-    func stream(aStream: NSStream, handleEvent eventCode: NSStreamEvent) {
-        var buffer = [UInt8](count: 8192, repeatedValue: 0)
+    func stream(_ aStream: Stream, handle eventCode: Stream.Event) {
+        var buffer = [UInt8](repeating: 0, count: 8192)
         if aStream == self.vmwInputStream {
             guard let inputStream = self.vmwInputStream else {
                 return
             }
             switch self.serverConnectionState {
-            case ConnectionState.WaitingForLine:
+            case ConnectionState.waitingForLine:
                 // XXX note this is only expecting a single line at a time from the server between responses
                 while (!self.serverHaveFullLine && self.serverLineWaitingCallback != nil) || inputStream.hasBytesAvailable {
                     while inputStream.hasBytesAvailable && !self.serverHaveFullLine {
@@ -473,29 +381,29 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
                             }
                         }
 
-                        self.serverLineSoFar.appendBytes(buffer, length: readSize)
+                        self.serverLineSoFar.append(buffer, length: readSize)
                         if buffer[readSize - 1] == 0x0a { //newline
                             self.serverHaveFullLine = true
                         }
                     }
 
                     if self.serverHaveFullLine && self.serverLineWaitingCallback != nil {
-                        let line = String(data: self.serverLineSoFar, encoding: NSUTF8StringEncoding)!
+                        let line = String(data: self.serverLineSoFar as Data, encoding: String.Encoding.utf8)!
                         let callback = self.serverLineWaitingCallback!
 
                         self.serverLineWaitingCallback = nil
                         self.serverLineSoFar = NSMutableData()
                         self.serverHaveFullLine = false
 
-                        callback(line: line)
+                        callback(line)
 
                     }
                 }
                 break
-            case ConnectionState.WaitingForData:
+            case ConnectionState.waitingForData:
                 self.dataWaitingServerCallback!()
                 break
-            case ConnectionState.ProxyingVnc:
+            case ConnectionState.proxyingVnc:
                 proxyVnc()
                 break
             default:
@@ -506,7 +414,7 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
                 return
             }
             switch self.clientConnectionState {
-            case ConnectionState.WaitingForLine:
+            case ConnectionState.waitingForLine:
                 // XXX note this is only expecting a single line at a time from the client between responses
                 while (!self.clientHaveFullLine && self.clientLineWaitingCallback != nil) || inputStream.hasBytesAvailable {
                     while inputStream.hasBytesAvailable && !self.clientHaveFullLine {
@@ -517,26 +425,26 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
                             return
                         }
                         
-                        self.clientLineSoFar.appendBytes(buffer, length: readSize)
+                        self.clientLineSoFar.append(buffer, length: readSize)
                         if buffer[readSize - 1] == 0x0a { //newline
                             self.clientHaveFullLine = true
                         }
                     }
                     
                     if self.clientHaveFullLine && self.clientLineWaitingCallback != nil {
-                        let line = String(data: self.clientLineSoFar, encoding: NSUTF8StringEncoding)!
+                        let line = String(data: self.clientLineSoFar as Data, encoding: String.Encoding.utf8)!
                         let callback = self.clientLineWaitingCallback!
                         
                         self.clientLineWaitingCallback = nil
                         self.clientLineSoFar = NSMutableData()
                         self.clientHaveFullLine = false
                         
-                        callback(line: line)
+                        callback(line)
                         
                     }
                 }
                 break
-            case ConnectionState.WaitingForData:
+            case ConnectionState.waitingForData:
                 // XXX note this is only expecting a single line at a time from the client between responses
                 while inputStream.hasBytesAvailable || (self.clientDataWaitingSize == 0 && self.clientDataWaitingCallback != nil) {
                     while self.clientDataWaitingSize > 0 && inputStream.hasBytesAvailable {
@@ -552,7 +460,7 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
                             return
                         }
                         self.clientDataWaitingSize -= readSize
-                        self.clientLineSoFar.appendBytes(buffer, length: readSize)
+                        self.clientLineSoFar.append(buffer, length: readSize)
                     }
 
                     if self.clientDataWaitingSize == 0 && self.clientDataWaitingCallback != nil {
@@ -561,11 +469,11 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
 
                         self.clientLineSoFar = NSMutableData()
                         self.clientDataWaitingCallback = nil
-                        callback(data: data)
+                        callback(data as Data)
                     }
                 }
                 break
-            case ConnectionState.ProxyingVnc:
+            case ConnectionState.proxyingVnc:
                 proxyVnc()
                 break
             default:
@@ -575,7 +483,7 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
 
     }
     
-    var lastActiveTime = NSDate()
+    var lastActiveTime = Date()
     
     func proxyVnc() {
         var idle = false
@@ -588,7 +496,7 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
         if let inputStream = self.vmwInputStream {
             if inputStream.hasBytesAvailable {
                 while true {
-                    var buffer = [UInt8](count: 32768, repeatedValue: 0)
+                    var buffer = [UInt8](repeating: 0, count: 32768)
                     var readSize : Int = 0
                     let r = SSLRead(self.sslCtx!, &buffer, buffer.count, &readSize)
                     //print ("vmw read: \(readSize): \(buffer[0]) \(buffer[1])")
@@ -612,7 +520,7 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
         
         if let inputStream = self.clientInputStream {
             while inputStream.hasBytesAvailable {
-                var buffer = [UInt8](count: 32768, repeatedValue: 0)
+                var buffer = [UInt8](repeating: 0, count: 32768)
                 let readSize = self.clientInputStream?.read(&buffer, maxLength: buffer.count)
                 //print ("client read: \(readSize)")
                 //assert(readSize > 0)
@@ -630,11 +538,11 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
         }
         
         if !idle {
-            lastActiveTime = NSDate()
+            lastActiveTime = Date()
         }
     }
 
-    func cleanup(closeServer: Bool) {
+    func cleanup(_ closeServer: Bool) {
         if let sslCtx = self.sslCtx {
             SSLClose(sslCtx)
             self.sslCtx = nil
@@ -661,15 +569,15 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
         self.dataWaitingServerCallback = nil
         self.clientLineWaitingCallback = nil
         self.clientDataWaitingCallback = nil
-        self.clientConnectionState = ConnectionState.Unknown
-        self.serverConnectionState = ConnectionState.Unknown
+        self.clientConnectionState = ConnectionState.unknown
+        self.serverConnectionState = ConnectionState.unknown
 
         let idleTimeInterval = lastActiveTime.timeIntervalSinceNow
         if idleTimeInterval < -5 || closeServer {
             CFRunLoopRemoveSource(
                 CFRunLoopGetMain(),
                 self.vncServerSocketEventSource,
-                kCFRunLoopDefaultMode);
+                CFRunLoopMode.defaultMode);
 
             let fd = CFSocketGetNative(self.vncServerSocket)
             close(fd)
@@ -680,8 +588,12 @@ class VMwareMksVncProxy : NSObject, NSStreamDelegate {
     }
 }
 
-func acceptVncClientConnection(s: CFSocket!, callbackType: CFSocketCallBackType, address: CFData!, data: UnsafePointer<Void>, info: UnsafeMutablePointer<Void>) {
-    let delegate = UnsafeMutablePointer<VMwareMksVncProxy>(info).memory
+func acceptVncClientConnection(_ s: CFSocket?, callbackType: CFSocketCallBackType, address: CFData?, data: UnsafeRawPointer?, info: UnsafeMutableRawPointer?) {
+    let delegate = info!.assumingMemoryBound(to: VMwareMksVncProxy.self).pointee
+    
+    //let delegate = info.withMemoryRebound(to: VMwareMksVncProxy.self, capacity: 1) {
+    //        $0.pointee
+    //}
     
     //let sockAddr = UnsafePointer<sockaddr_in>(CFDataGetBytePtr(address))
     //let ipAddress = inet_ntoa(sockAddr.memory.sin_addr)
@@ -689,15 +601,15 @@ func acceptVncClientConnection(s: CFSocket!, callbackType: CFSocketCallBackType,
     //let ipAddressStr = NSString(data: addrData, encoding: NSUTF8StringEncoding)!
     //print("Received a connection from \(ipAddressStr)")
     
-    let clientSocketHandle = UnsafePointer<CFSocketNativeHandle>(data).memory
+    let clientSocketHandle = data!.assumingMemoryBound(to: CFSocketNativeHandle.self).pointee
     
     var readStream : Unmanaged<CFReadStream>?
     var writeStream : Unmanaged<CFWriteStream>?
     CFStreamCreatePairWithSocket(kCFAllocatorDefault, clientSocketHandle, &readStream, &writeStream)
     delegate.vncClientSocketFd = clientSocketHandle
     
-    let inputStream: NSInputStream = readStream!.takeRetainedValue()
-    let outputStream: NSOutputStream = writeStream!.takeRetainedValue()
+    let inputStream: InputStream = readStream!.takeRetainedValue()
+    let outputStream: OutputStream = writeStream!.takeRetainedValue()
     
     inputStream.open()
     outputStream.open()
@@ -705,25 +617,25 @@ func acceptVncClientConnection(s: CFSocket!, callbackType: CFSocketCallBackType,
     delegate.handleVncProxyClient(inputStream, outputStream: outputStream)
 }
 
-func sslReadCallback(connection: SSLConnectionRef,
-                     data: UnsafeMutablePointer<Void>,
+func sslReadCallback(_ connection: SSLConnectionRef,
+                     data: UnsafeMutableRawPointer,
                      dataLength: UnsafeMutablePointer<Int>) -> OSStatus {
-    let delegate = UnsafeMutablePointer<VMwareMksVncProxy>(connection).memory
+    let delegate = connection.assumingMemoryBound(to: VMwareMksVncProxy.self).pointee
     let inputStream = delegate.vmwInputStream!
-    let expectedReadSize = dataLength.memory
-    dataLength.memory = 0
+    let expectedReadSize = dataLength.pointee
+    dataLength.pointee = 0
     //print("starting ssl read callback, expecting \(expectedReadSize) bytes")
-    if inputStream.hasBytesAvailable && dataLength.memory < expectedReadSize {
-        let size = inputStream.read(UnsafeMutablePointer<UInt8>(data), maxLength: expectedReadSize)
+    if inputStream.hasBytesAvailable && dataLength.pointee < expectedReadSize {
+        let size = inputStream.read(data.assumingMemoryBound(to: UInt8.self), maxLength: expectedReadSize)
         //print("expectedReadSize=\(expectedReadSize), actual read size=\(size)")
         if (size == 0) {
             //print("ssl read closed")
             return Int32(errSSLClosedGraceful)
         }
-        dataLength.memory += size
+        dataLength.pointee += size
     }
 
-    if (dataLength.memory < expectedReadSize) {
+    if (dataLength.pointee < expectedReadSize) {
         //print("would have blocked. read \(dataLength.memory) of \(expectedReadSize)")
         return Int32(errSSLWouldBlock)
     }
@@ -731,12 +643,12 @@ func sslReadCallback(connection: SSLConnectionRef,
     return 0
 }
 
-func sslWriteCallback(connection: SSLConnectionRef,
-                      data: UnsafePointer<Void>,
+func sslWriteCallback(_ connection: SSLConnectionRef,
+                      data: UnsafeRawPointer,
                       dataLength: UnsafeMutablePointer<Int>) -> OSStatus {
-    let delegate = UnsafeMutablePointer<VMwareMksVncProxy>(connection).memory
+    let delegate = connection.assumingMemoryBound(to: VMwareMksVncProxy.self).pointee
     let outputStream = delegate.vmwOutputStream!
     
-    outputStream.write(UnsafePointer<UInt8>(data), maxLength: dataLength.memory)
+    outputStream.write(data.assumingMemoryBound(to: UInt8.self), maxLength: dataLength.pointee)
     return 0
 }

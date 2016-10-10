@@ -10,10 +10,10 @@ import Foundation
 
 extension String {
     func htmlEncode() -> String {
-        return self.stringByReplacingOccurrencesOfString("<", withString: "&lt;").stringByReplacingOccurrencesOfString(">", withString: "&gt;").stringByReplacingOccurrencesOfString("&", withString: "&amp;")
+        return self.replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "&", with: "&amp;")
     }
     
     func urlEncode() -> String {
-        return self.stringByAddingPercentEncodingWithAllowedCharacters(.URLQueryAllowedCharacterSet())!
+        return self.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)!
     }
 }

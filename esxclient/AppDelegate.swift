@@ -9,7 +9,7 @@
 import Cocoa
 
 @NSApplicationMain
-class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, StreamDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate {
 
     @IBOutlet weak var window: NSWindow!
     @IBOutlet weak var sidebarList: NSOutlineView!
@@ -46,19 +46,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
         listHeader["header"] = "Virtual Machines"
     }
     
-    override func controlTextDidChange(obj: NSNotification) {
+    override func controlTextDidChange(_ obj: Notification) {
         if self.hostField.stringValue != "" && self.usernameField.stringValue != "" && self.passwordField.stringValue != "" {
             
-            self.connectButton.enabled = true
+            self.connectButton.isEnabled = true
         } else {
-            self.connectButton.enabled = false
+            self.connectButton.isEnabled = false
         }
 
     }
 
-    @IBAction func connectLoginButtonClicked(sender: AnyObject) {
-        self.connectButton.enabled = false
-        self.loginImage.hidden = true
+    @IBAction func connectLoginButtonClicked(_ sender: AnyObject) {
+        self.connectButton.isEnabled = false
+        self.loginImage.isHidden = true
         self.loginProgressSpinner.startAnimation(self)
         
         self.vmwareApi = VMwareApiClient(
@@ -94,13 +94,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
                     newSelectedRow = 1
                 }
                 self.sidebarList.reloadData()
-                self.sidebarList.selectRowIndexes(NSIndexSet(index: newSelectedRow), byExtendingSelection: false)
+                self.sidebarList.selectRowIndexes(IndexSet(integer: newSelectedRow), byExtendingSelection: false)
                 self.sidebarAction(self)
 
             },
             updateProgress: { (progressPercent, status) -> Void in
-                self.progressCircle?.doubleValue = Double(progressPercent > 0 ? progressPercent : 1)
-                self.progressCircle.hidden = (progressPercent == 100)
+                if progressPercent == 0 {
+                    self.progressCircle?.doubleValue = 1
+                } else if progressPercent == 100 {
+                    self.progressCircle?.doubleValue = 100.0
+                    DispatchQueue.main.async { self.progressCircle?.doubleValue = 0 }
+                } else {
+                    self.progressCircle?.doubleValue = Double(progressPercent)
+                }
             }
         )
 
@@ -117,13 +123,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
         self.vmwareApi?.cancel()
         self.window.orderOut(self)
 
-        self.connectButton.enabled = true
-        self.loginImage.hidden = false
+        self.connectButton.isEnabled = true
+        self.loginImage.isHidden = false
         self.loginProgressSpinner.stopAnimation(self)
         self.loginWindow.makeKeyAndOrderFront(self)
     }
 
-    @IBAction func viewConsoleButtonClicked(sender: AnyObject) {
+    @IBAction func viewConsoleButtonClicked(_ sender: AnyObject) {
         let row = self.sidebarList.selectedRow
         if row > 0 {
             let vm = vmList[row - 1]
@@ -134,8 +140,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
                     self.vmwareMksVncProxy = VMwareMksVncProxy(host: self.vmwareApi!.host, ticket: ticket, cfgFile: cfgFile, port: port, sslThumbprint: sslThumbprint)
                     
                     self.vmwareMksVncProxy!.setupVncProxyServerPort() { (port) -> Void in
-                        dispatch_async(dispatch_get_main_queue()) {
-                            NSWorkspace.sharedWorkspace().openURL(NSURL(string: "vnc://abc:123@localhost:\(port)")!)
+                        DispatchQueue.main.async {
+                            NSWorkspace.shared().open(URL(string: "vnc://abc:123@localhost:\(port)")!)
                             //print("connect to port \(port)")
                         }
                     }
@@ -145,7 +151,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
         }
     }
 
-    @IBAction func sidebarAction(sender: AnyObject) {
+    @IBAction func sidebarAction(_ sender: AnyObject) {
         let row = self.sidebarList.selectedRow
         if row > 0 {
             let vm = vmList[row - 1]
@@ -154,66 +160,66 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
                 vmNameField!.stringValue = vm["name"]!
                 vmStatusField!.stringValue = vm["runtime.powerState"]!
                 vmGuestIPField!.stringValue = vm["guest.ipAddress"]!
-                viewConsoleButton!.enabled = (vm["runtime.powerState"]! == "poweredOn")
-                powerOnButton!.enabled = !viewConsoleButton!.enabled
-                powerOffButton!.enabled = viewConsoleButton!.enabled
-                resetButton!.enabled = powerOffButton!.enabled
+                viewConsoleButton!.isEnabled = (vm["runtime.powerState"]! == "poweredOn")
+                powerOnButton!.isEnabled = !viewConsoleButton!.isEnabled
+                powerOffButton!.isEnabled = viewConsoleButton!.isEnabled
+                resetButton!.isEnabled = powerOffButton!.isEnabled
                 self.vmwareApi?.getVMScreenshot(id!) { (screenshotData) -> Void in
                     self.vmScreenshotView.image = NSImage(data: screenshotData)
                 }
             }
         } else {
-            viewConsoleButton!.enabled = false
-            powerOnButton!.enabled = false
-            powerOffButton!.enabled = false
-            resetButton!.enabled = false
+            viewConsoleButton!.isEnabled = false
+            powerOnButton!.isEnabled = false
+            powerOffButton!.isEnabled = false
+            resetButton!.isEnabled = false
         }
     }
 
-    @IBAction func powerOnButtonClick(sender: AnyObject) {
+    @IBAction func powerOnButtonClick(_ sender: AnyObject) {
         let row = self.sidebarList.selectedRow
         if row > 0 {
             let vm = vmList[row - 1]
             let id = vm["id"]
             if id != nil {
                 self.progressCircle?.doubleValue = 1.0
-                self.progressCircle.hidden = false
+                self.progressCircle.isHidden = false
                 vmwareApi?.powerOnVM(id!)
             }
         }
     }
     
-    @IBAction func powerOffButtonClick(sender: AnyObject) {
+    @IBAction func powerOffButtonClick(_ sender: AnyObject) {
         let row = self.sidebarList.selectedRow
         if row > 0 {
             let vm = vmList[row - 1]
             let id = vm["id"]
             if id != nil {
                 self.progressCircle?.doubleValue = 1.0
-                self.progressCircle.hidden = false
+                self.progressCircle.isHidden = false
                 vmwareApi?.powerOffVM(id!)
             }
         }
     }
 
-    @IBAction func resetButtonClick(sender: AnyObject) {
+    @IBAction func resetButtonClick(_ sender: AnyObject) {
         let row = self.sidebarList.selectedRow
         if row > 0 {
             let vm = vmList[row - 1]
             let id = vm["id"]
             if id != nil {
                 self.progressCircle?.doubleValue = 1.0
-                self.progressCircle.hidden = false
+                self.progressCircle.isHidden = false
                 vmwareApi?.resetVM(id!)
             }
         }
     }
     
-    @IBAction func loginCancelButtonClick(sender: AnyObject) {
+    @IBAction func loginCancelButtonClick(_ sender: AnyObject) {
         NSApp!.terminate(sender)
     }
 
-    func outlineView(outlineView: NSOutlineView, child index: Int, ofItem item: AnyObject?) -> AnyObject {
+    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
         var info = [String: String]()
 
         if item == nil {
@@ -227,43 +233,43 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
         return info
     }
     
-    func outlineView(outlineView: NSOutlineView, isItemExpandable item: AnyObject) -> Bool {
+    func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
         return false
     }
-    func outlineView(outlineView: NSOutlineView, numberOfChildrenOfItem item: AnyObject?) -> Int {
+    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
         return vmList.count + 1
     }
-    func outlineView(outlineView: NSOutlineView, objectValueForTableColumn tableColumn: NSTableColumn?, byItem item: AnyObject?) -> AnyObject? {
+    func outlineView(_ outlineView: NSOutlineView, objectValueFor tableColumn: NSTableColumn?, byItem item: Any?) -> Any? {
         return item
     }
 
-    func outlineView(outlineView: NSOutlineView, setObjectValue object: AnyObject?, forTableColumn tableColumn: NSTableColumn?, byItem item: AnyObject?) {
+    func outlineView(_ outlineView: NSOutlineView, setObjectValue object: Any?, for tableColumn: NSTableColumn?, byItem item: Any?) {
         
     }
 
-    func outlineView(outlineView: NSOutlineView, dataCellForTableColumn tableColumn: NSTableColumn?, tem item: AnyObject) -> NSCell? {
+    func outlineView(_ outlineView: NSOutlineView, dataCellFor tableColumn: NSTableColumn?, item: Any) -> NSCell? {
         return nil
     }
 
-    func outlineView(outlineView: NSOutlineView,
-                     viewForTableColumn tableColumn: NSTableColumn?,
-                                        item: AnyObject) -> NSView? {
+    func outlineView(_ outlineView: NSOutlineView,
+                     viewFor tableColumn: NSTableColumn?,
+                                        item: Any) -> NSView? {
         var v : NSTableCellView
         
         let info = item as! [String: String]
         if (info["header"] != nil) {
-            v = outlineView.makeViewWithIdentifier("HeaderCell", owner: self) as! NSTableCellView
+            v = outlineView.make(withIdentifier: "HeaderCell", owner: self) as! NSTableCellView
             if let tf = v.textField {
                 tf.stringValue = info["header"]!
             }
         } else {
             if info["runtime.powerState"] != nil && info["runtime.powerState"]! == "poweredOn" {
-                v = outlineView.makeViewWithIdentifier("OnCell", owner: self) as! NSTableCellView
+                v = outlineView.make(withIdentifier: "OnCell", owner: self) as! NSTableCellView
                 if let tf = v.textField {
                     tf.stringValue = info["name"]!
                 }
             } else {
-                v = outlineView.makeViewWithIdentifier("OffCell", owner: self) as! NSTableCellView
+                v = outlineView.make(withIdentifier: "OffCell", owner: self) as! NSTableCellView
                 if let tf = v.textField {
                     tf.stringValue = info["name"]!
                 }
@@ -273,7 +279,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
         return v
     }
     
-    func outlineView(outlineView: NSOutlineView, isGroupItem item: AnyObject) -> Bool {
+    func outlineView(_ outlineView: NSOutlineView, isGroupItem item: Any) -> Bool {
         let info = item as! [String: String]
         if (info["header"] != nil) {
             return true
@@ -282,31 +288,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSStreamDelegate, NSOutlineV
         }
     }
     
-    func outlineView(outlineView: NSOutlineView, shouldSelectItem item: AnyObject) -> Bool {
+    func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
         let info = item as! [String: String]
         return (info["id"] != nil)
     }
 
-    func applicationDidFinishLaunching(aNotification: NSNotification) {
-        self.loginWindow!.level = Int(CGWindowLevelForKey(.MaximumWindowLevelKey))
-
-        //self.hostField.stringValue  = "172.16.21.33"
-        //self.usernameField.stringValue = "root"
-        //self.passwordField.stringValue = "passworD1"
+    func applicationDidFinishLaunching(_ aNotification: Notification) {
+        self.loginWindow!.level = Int(CGWindowLevelForKey(.maximumWindow))
         
-        //let host = "10.0.1.26"
-        self.hostField.stringValue = "10.0.1.39"
-        self.usernameField.stringValue = "root"
-        self.passwordField.stringValue = "hello123"
-        
-        //let host = "10.0.1.29"
-        //let username = "VSPHERE.LOCAL\\scottjg"
-        //let password = "Hello123!"
-        
-        self.connectButton.enabled = true
+        self.connectButton.isEnabled = true
     }
 
-    func applicationWillTerminate(aNotification: NSNotification) {
+    func applicationWillTerminate(_ aNotification: Notification) {
         // Insert code here to tear down your application
     }
     
